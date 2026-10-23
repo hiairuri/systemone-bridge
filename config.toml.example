@@ -1,0 +1,43 @@
+# systemone-bridge 配置模板。
+# 复制为 config.toml 后按需修改；真实 config.toml 不入库（见 .gitignore）。
+
+[server]
+host = "127.0.0.1"
+# 18500 为本机约定空闲端口（8000/8001/7999/18000/18660 已被占用）
+port = 18500
+
+# 南向 SystemOne（Intern-Decision /v1/decisions）上游。
+# 端点当前可以不存在：解析成功但 SystemOne 不可达/超时/报错时自动直通回退。
+[upstream_systemone]
+# /v1/decisions 的服务根（桥会在其下拼 /v1/decisions）
+base_url = "http://127.0.0.1:8100"
+# 留空则不发 Authorization 头；官方开源 serving 无鉴权
+api_key = ""
+# 一次决策调用的超时秒数（SystemOne 单次前向毫秒级，10s 已极宽裕）
+timeout_seconds = 10.0
+
+# 回退上游：任何情况下桥的行为不能比"直接打这个上游"更差。
+[fallback]
+base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
+api_key = ""
+# 当北向请求未带 model 或 model 指向 intern-decision-* 但被迫回退时，改写为该模型
+model = "GLM-5.3-Flash"
+timeout_seconds = 120.0
+
+# 任务解析器开关：关闭后对应任务直接走直通回退
+[task_parsers]
+# MaiBot 表达方式选择（expression_selector）快照模板
+expression_selector = true
+# DiceFrame 回合检定规划器（dice_checks 工具调用）
+df_check_planner = true
+
+[translation]
+# exprsel：把 SystemOne 概率分布映射回 selected_ids 的最低入选概率
+expression_min_probability = 0.05
+# exprsel：最多入选条数（与模板语义"0 到 5 条"一致）
+expression_max_selected = 5
+
+[logging]
+level = "INFO"
+# 相对项目根；data/ 不入库
+dir = "data/logs"

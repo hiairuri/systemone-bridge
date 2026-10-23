@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# 真实配置不入库（config.toml.example 才入库）
+config.toml
+
+# 运行数据
+data/
+
+# IDE / 系统
+.idea/
+.vscode/
+Thumbs.db

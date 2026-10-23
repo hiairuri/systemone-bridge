@@ -1,0 +1,29 @@
+[project]
+name = "systemone-bridge"
+version = "0.1.0"
+description = "Local protocol bridge: OpenAI-compatible northbound (chat completions) to Intern-Decision SystemOne /v1/decisions southbound, with safe passthrough fallback."
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.10",
+    "pydantic>=2.7",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+systemone-bridge = "systemone_bridge.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.7"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "systemone_bridge"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
