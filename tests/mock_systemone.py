@@ -127,6 +127,8 @@ def create_mock_systemone_app(
 
     app = web.Application()
     app.router.add_post("/v1/decisions", decisions)
+    # OpenXLab 托管网关别名路径（与官方 /v1/jev 别名同理），供网关形状测试使用
+    app.router.add_post("/v1/systemone", decisions)
     app.router.add_get("/health", health)
     return app
 

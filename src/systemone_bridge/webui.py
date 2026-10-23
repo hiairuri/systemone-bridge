@@ -225,7 +225,7 @@ _SectionT = TypeVar("_SectionT", bound=BaseModel)
 
 # 测试端点允许的覆盖字段（api_key 掩码/缺省时沿用当前配置）
 _TEST_OVERRIDE_FIELDS: dict[str, tuple[str, ...]] = {
-    "systemone": ("base_url", "api_key", "timeout_seconds"),
+    "systemone": ("base_url", "decisions_path", "api_key", "model", "timeout_seconds"),
     "fallback": ("base_url", "api_key", "model", "timeout_seconds"),
 }
 

@@ -1,4 +1,4 @@
-"""南向 SystemOne（Intern-Decision /v1/decisions）客户端。
+"""南向 SystemOne（Intern-Decision 决策端点，路径可配置）客户端。
 
 错误分类（调用方统一按「直通回退」处理）：
 - unreachable：连接失败/超时/DNS 失败；
@@ -39,7 +39,8 @@ class SystemOneClient:
         self._config = config
 
     def _url(self) -> str:
-        return self._config.base_url.rstrip("/") + "/v1/decisions"
+        # 决策端点路径可配置：官方开源 serving 为 /v1/decisions，OpenXLab 托管网关为 /v1/systemone
+        return self._config.base_url.rstrip("/") + self._config.decisions_path
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -70,9 +71,13 @@ class SystemOneClient:
         questions: dict[str, dict[str, Any]],
         images: list[dict[str, Any]] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """调用 /v1/decisions，成功返回 answers 字典；任何失败抛 SystemOneError。"""
+        """调用决策端点，成功返回 answers 字典；任何失败抛 SystemOneError。"""
 
         payload: dict[str, Any] = {"state": state, "questions": questions}
+        # model 字段按配置注入（OpenXLab 网关校验必需）；留空则不注入，保持官方 serving 兼容
+        model = str(getattr(self._config, "model", "") or "")
+        if model:
+            payload["model"] = model
         if images:
             payload["images"] = images
         timeout = aiohttp.ClientTimeout(total=float(self._config.timeout_seconds))

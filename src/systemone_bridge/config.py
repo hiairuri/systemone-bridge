@@ -19,7 +19,11 @@ class ServerConfig(BaseModel):
 
 class UpstreamSystemOneConfig(BaseModel):
     base_url: str = "http://127.0.0.1:8100"
+    # 决策端点路径：官方开源 serving 为 /v1/decisions；OpenXLab 托管网关为 /v1/systemone
+    decisions_path: str = "/v1/decisions"
     api_key: str = ""
+    # 注入请求体顶层的 model 字段（网关校验必需）；留空则不注入，保持官方 serving 兼容
+    model: str = ""
     timeout_seconds: float = 10.0
 
 
@@ -84,8 +88,10 @@ def bootstrap_config_file(config_path: Path, example_path: Path) -> bool:
 _TOML_COMMENTS: dict[str, tuple[str, ...]] = {
     "server": ("监听地址/端口；改端口需重启服务生效",),
     "upstream_systemone": (
-        "南向 SystemOne（Intern-Decision /v1/decisions）上游。",
+        "南向 SystemOne（Intern-Decision 决策端点）上游。",
         "不可达/超时/报错时自动直通回退；api_key 留空则不发 Authorization。",
+        "decisions_path：官方开源 serving 为 /v1/decisions，OpenXLab 托管网关为 /v1/systemone。",
+        "model：注入请求体顶层 model 字段（网关校验必需）；留空则不注入，保持官方兼容。",
     ),
     "fallback": (
         "回退上游（OpenAI 兼容）：任何情况下桥不比直接打这个上游更差。",
@@ -99,7 +105,7 @@ _TOML_COMMENTS: dict[str, tuple[str, ...]] = {
 # 节内键的输出顺序（新键追加在末尾，不致错位）
 _TOML_KEY_ORDER: dict[str, tuple[str, ...]] = {
     "server": ("host", "port"),
-    "upstream_systemone": ("base_url", "api_key", "timeout_seconds"),
+    "upstream_systemone": ("base_url", "decisions_path", "api_key", "model", "timeout_seconds"),
     "fallback": ("base_url", "api_key", "model", "timeout_seconds"),
     "task_parsers": ("expression_selector", "df_check_planner"),
     "translation": ("expression_min_probability", "expression_max_selected"),

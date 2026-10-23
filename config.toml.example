@@ -6,13 +6,18 @@ host = "127.0.0.1"
 # 18500 为本机约定空闲端口（8000/8001/7999/18000/18660 已被占用）
 port = 18500
 
-# 南向 SystemOne（Intern-Decision /v1/decisions）上游。
+# 南向 SystemOne（Intern-Decision 决策端点）上游。
 # 端点当前可以不存在：解析成功但 SystemOne 不可达/超时/报错时自动直通回退。
 [upstream_systemone]
-# /v1/decisions 的服务根（桥会在其下拼 /v1/decisions）
+# 决策端点的服务根（桥会在其下拼 decisions_path）
 base_url = "http://127.0.0.1:8100"
-# 留空则不发 Authorization 头；官方开源 serving 无鉴权
+# 决策端点路径：官方开源 serving 为 /v1/decisions；OpenXLab 托管网关为 /v1/systemone
+decisions_path = "/v1/decisions"
+# 留空则不发 Authorization 头；官方开源 serving 无鉴权，托管网关一般要求 Bearer key
 api_key = ""
+# 注入请求体顶层的 model 字段（OpenXLab 网关校验必需，如 intern-decision-4b）；
+# 留空则不注入，保持官方开源 serving 兼容（官方会忽略未知顶层键）
+model = ""
 # 一次决策调用的超时秒数（SystemOne 单次前向毫秒级，10s 已极宽裕）
 timeout_seconds = 10.0
 

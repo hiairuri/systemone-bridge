@@ -109,10 +109,12 @@
   <!-- SystemOne 上游 -->
   <section class="card">
     <h2><span class="dot"></span>SystemOne 上游</h2>
-    <p class="desc">Intern-Decision 结构化决策服务（桥拼 /v1/decisions）。不可达 / 超时 / 报错时自动直通回退。</p>
+    <p class="desc">Intern-Decision 结构化决策服务（桥拼 decisions_path）。不可达 / 超时 / 报错时自动直通回退。</p>
     <div class="grid">
       <div class="field-wide"><label>服务地址 base_url</label><input type="text" id="sm-base" data-section="upstream_systemone" data-key="base_url"></div>
       <div><label>API Key（留空则不发 Authorization）</label><input type="password" id="sm-key" data-section="upstream_systemone" data-key="api_key" autocomplete="off"></div>
+      <div><label>决策路径 decisions_path</label><input type="text" id="sm-path" data-section="upstream_systemone" data-key="decisions_path" placeholder="/v1/decisions（官方）或 /v1/systemone（OpenXLab）"></div>
+      <div><label>模型 model（留空不注入）</label><input type="text" id="sm-model" data-section="upstream_systemone" data-key="model" placeholder="intern-decision-4b"></div>
       <div><label>决策超时（秒）</label><input type="number" id="sm-timeout" step="0.5" min="1" data-section="upstream_systemone" data-key="timeout_seconds"></div>
     </div>
     <div class="test-row">

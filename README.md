@@ -57,8 +57,10 @@ cd D:\项目\systemone-bridge
 | 节 | 键 | 说明 |
 |---|---|---|
 | `[server]` | `host` / `port` | 监听地址，默认 127.0.0.1:18500 |
-| `[upstream_systemone]` | `base_url` | SystemOne 服务根（桥拼 `/v1/decisions`）；当前端点不存在也能跑 |
-| | `api_key` | 留空不发 Authorization；官方开源 serving 无鉴权 |
+| `[upstream_systemone]` | `base_url` | SystemOne 服务根（桥在其下拼 `decisions_path`）；当前端点不存在也能跑 |
+| | `decisions_path` | 决策端点路径：官方开源 serving `/v1/decisions`（默认），OpenXLab 托管网关 `/v1/systemone` |
+| | `api_key` | 留空不发 Authorization；官方开源 serving 无鉴权，托管网关填 Bearer key |
+| | `model` | 注入请求体顶层 model 字段（OpenXLab 网关校验必需，如 `intern-decision-4b`）；留空不注入保持官方兼容 |
 | | `timeout_seconds` | 单次决策超时，默认 10 |
 | `[fallback]` | `base_url` / `api_key` / `model` / `timeout_seconds` | 回退上游（OpenAI 兼容），填 GLM 的 |
 | `[task_parsers]` | `expression_selector` / `df_check_planner` | 解析器开关，关了就直通 |
@@ -132,7 +134,8 @@ cd D:\项目\systemone-bridge
 ## 测试
 
 ```powershell
-uv run pytest tests/ -q     # 52 用例：真实快照解析 / DF 合成 / 各类回退 / mock 端到端
+uv run pytest tests/ -q     # 55 用例：真实快照解析 / DF 合成 / 各类回退 / mock 端到端
+                            #           / OpenXLab 网关形状（/v1/systemone + model 注入）
                             #           / WebUI（脱敏 / 掩码保留 / 热生效 / 测试端点 / bootstrap）
 ```
 
