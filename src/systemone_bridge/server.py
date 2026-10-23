@@ -1,4 +1,4 @@
-"""aiohttp 服务：北向 /v1/chat/completions、/v1/models，南向与回退客户端装配。"""
+"""aiohttp 服务：北向 /v1/chat/completions、/v1/models，南向与回退客户端装配，WebUI。"""
 
 from __future__ import annotations
 
@@ -14,52 +14,53 @@ import aiohttp
 from aiohttp import web
 
 from . import __version__
-from .config import BridgeConfig, load_config
+from .appkeys import (
+    KEY_CONFIG_PATH,
+    KEY_FALLBACK,
+    KEY_RUNTIME,
+    KEY_SESSION,
+    KEY_STATS,
+    KEY_SYSTEMONE,
+    RuntimeState,
+)
+from .config import BridgeConfig, bootstrap_config_file, load_config
 from .fallback import FallbackError, FallbackClient
 from .logging_setup import setup_logging
-from .northbound import NorthboundRouter, RoutingResult
-from .parsers import DfCheckPlannerParser, ExpressionSelectorParser
+from .northbound import RoutingResult
+from .stats import BridgeStats
 from .systemone import SystemOneClient
+from .webui import build_router, register_webui
 
 logger = logging.getLogger("systemone_bridge.server")
 
 # 静态对外模型清单（v1：两个规格都展示，实际权重由 SystemOne 端侧决定）
 ADVERTISED_MODELS = ("intern-decision-4b", "intern-decision-0.8b")
 
-# aiohttp 应用状态键（AppKey 形式，类型安全）
-KEY_CONFIG = web.AppKey("config", BridgeConfig)
-KEY_SESSION = web.AppKey("session", aiohttp.ClientSession)
-KEY_SYSTEMONE = web.AppKey("systemone", SystemOneClient)
-KEY_FALLBACK = web.AppKey("fallback", FallbackClient)
-KEY_ROUTER = web.AppKey("router", NorthboundRouter)
-
 
 @asynccontextmanager
-async def create_app(config: BridgeConfig, project_root: Path):
+async def create_app(
+    config: BridgeConfig, project_root: Path, config_path: Path | None = None
+):
     setup_logging(config.logging.level, project_root / config.logging.dir)
     session = aiohttp.ClientSession()
     try:
         app = web.Application(client_max_size=32 * 1024 * 1024)
-        app[KEY_CONFIG] = config
         app[KEY_SESSION] = session
         app[KEY_SYSTEMONE] = SystemOneClient(config.upstream_systemone, session)
         app[KEY_FALLBACK] = FallbackClient(config.fallback, session)
-        parsers: list[Any] = []
-        if config.task_parsers.expression_selector:
-            parsers.append(
-                ExpressionSelectorParser(
-                    min_probability=config.translation.expression_min_probability,
-                    max_selected=config.translation.expression_max_selected,
-                )
-            )
-        if config.task_parsers.df_check_planner:
-            parsers.append(DfCheckPlannerParser())
-        app[KEY_ROUTER] = NorthboundRouter(parsers, app[KEY_SYSTEMONE], app[KEY_FALLBACK])
+        app[KEY_STATS] = BridgeStats()
+        if config_path is not None:
+            app[KEY_CONFIG_PATH] = config_path
+        # 解析器装配与 WebUI 保存后的热应用共用同一构建逻辑；
+        # config/router 收进启动前注册的 RuntimeState，保存热应用只换其内部引用
+        router = build_router(config, app[KEY_SYSTEMONE], app[KEY_FALLBACK], app[KEY_STATS])
+        app[KEY_RUNTIME] = RuntimeState(config=config, router=router)
 
         app.router.add_post("/v1/chat/completions", handle_chat_completions)
         app.router.add_get("/v1/models", handle_models)
         app.router.add_get("/v1/models/", handle_models)
         app.router.add_get("/health", handle_health)
+        register_webui(app)
         yield app
     finally:
         await session.close()
@@ -72,7 +73,7 @@ async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
         return web.json_response({"error": {"message": "invalid JSON body"}}, status=400)
     if not isinstance(body, dict):
         return web.json_response({"error": {"message": "body must be a JSON object"}}, status=400)
-    router: NorthboundRouter = request.app[KEY_ROUTER]
+    router = request.app[KEY_RUNTIME].router
     try:
         result = await router.handle_chat_completions(body)
     except FallbackError as exc:
@@ -141,12 +142,15 @@ def main() -> None:
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parents[2]
-    config = load_config(Path(args.config))
+    config_path = Path(args.config)
+    # 首启 bootstrap：config.toml 不存在时从模板生成（可开箱后到 WebUI 填密钥）
+    bootstrap_config_file(config_path, project_root / "config.toml.example")
+    config = load_config(config_path)
     host = args.host or config.server.host
     port = args.port or config.server.port
 
     async def run() -> None:
-        async with create_app(config, project_root) as app:
+        async with create_app(config, project_root, config_path) as app:
             runner = web.AppRunner(app, access_log=None)
             await runner.setup()
             site = web.TCPSite(runner, host, port)

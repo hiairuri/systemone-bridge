@@ -41,12 +41,13 @@ DiceFrame 检定 ──┘                                          │
 
 ```powershell
 cd D:\项目\systemone-bridge
-copy config.toml.example config.toml   # 填 fallback.api_key；SystemOne 端点可先不配
-.\start.ps1                            # 首次自动 uv sync；等价于 uv run systemone-bridge
+.\start.ps1                            # 首次自动 uv sync；config.toml 缺失时自动从模板生成
 # 手动等价：uv sync ; uv run systemone-bridge --config config.toml
 ```
 
 - Python 3.12（`.python-version` 已钉），依赖 aiohttp + pydantic，uv 管理。
+- 首次启动无 `config.toml` 时自动从 `config.toml.example` 生成（保留注释），可直接开箱，
+  密钥推荐到 WebUI 填写；也可手动 `copy config.toml.example config.toml`。
 - 默认监听 `127.0.0.1:18500`（8000/8001/7999/18000/18660 已被占用，18500 空闲）。
 - 日志：`data/logs/bridge.log`（滚动 8MB×5），每次请求记录路由决策与回退原因。
 - `GET /health`：桥自身状态 + SystemOne 上游探测；`GET /v1/models`：intern-decision-4b / 0.8b。
@@ -65,6 +66,31 @@ copy config.toml.example config.toml   # 填 fallback.api_key；SystemOne 端点
 | `[logging]` | `level` / `dir` | 日志级别与目录 |
 
 真实 `config.toml` 不入库（.gitignore），只入库 `config.toml.example`。
+
+## WebUI 控制台
+
+浏览器访问 **`http://127.0.0.1:18500/`**（即桥自身地址），单页原生 JS 实现，无外部依赖。
+
+| 卡片 | 字段 / 内容 |
+|---|---|
+| SystemOne 上游 | `base_url` / `api_key`（留空不发 Authorization）/ 决策超时；「测试连通」按钮打真实 `{base_url}/health` 并显示延迟与错误分类 |
+| 回退上游 | `base_url` / `api_key` / `model` / 超时；「测试连通」发一次 `max_tokens=1` 的最小请求，验证地址 / 密钥 / 模型三者 |
+| 解析器 | exprsel / DF 检定开关（关了直通）；exprsel 最低入选概率与最多入选条数 |
+| 服务与日志 | host / port / 日志级别 / 日志目录（改 host、port、日志目录需重启；其余保存即生效） |
+| 运行状态 | 总请求数、SystemOne 命中、直通回退计数、路由明细、最近错误（每 5 秒自动刷新） |
+
+**保存与热生效**：「保存配置」先 pydantic 校验（失败不落盘并返回瘦身错误），再原子写盘
+（临时文件 + replace），最后热应用到运行中的桥——上游地址 / 密钥 / 模型 / 超时、解析器开关、
+翻译参数、日志级别对**后续请求立即生效，无需重启**。
+
+**密钥安全**：
+- `GET /api/config` 与保存回包中的 `api_key` 一律脱敏为「前 4 字符 + `***`」；
+- 提交仍为掩码占位（`***` 结尾）时后端自动保留旧密钥，不会把掩码写进配置；
+- 校验失败不落盘，错误详情不回显密钥。
+
+**安全提示**：WebUI 无登录鉴权，且能看到配置、改写密钥指向——**只在本机使用，勿把 18500
+端口暴露到公网 / 局域网**（保持默认 `host = 127.0.0.1`；确需远程改配置请走 SSH 隧道）。
+浏览器直接访问即可，配合 `host = 0.0.0.0` 会同时向所有人开放北向接口与控制台，默认禁止。
 
 ## MaiBot（MB）接入指引
 
@@ -106,7 +132,8 @@ copy config.toml.example config.toml   # 填 fallback.api_key；SystemOne 端点
 ## 测试
 
 ```powershell
-uv run pytest tests/ -q     # 39 用例：真实快照解析 / DF 合成 / 各类回退 / mock 端到端
+uv run pytest tests/ -q     # 52 用例：真实快照解析 / DF 合成 / 各类回退 / mock 端到端
+                            #           / WebUI（脱敏 / 掩码保留 / 热生效 / 测试端点 / bootstrap）
 ```
 
 `tests/fixtures/` 含 4 份真实 MaiBot exprsel 快照与 DF 检定规划模板副本；

@@ -7,6 +7,7 @@ from typing import Any
 
 from .fallback import FallbackClient
 from .parsers import NorthboundRequest, ParseError, TaskParser, extract_request
+from .stats import BridgeStats
 from .systemone import SystemOneClient, SystemOneError
 
 logger = logging.getLogger("systemone_bridge.northbound")
@@ -35,14 +36,17 @@ class NorthboundRouter:
         parsers: list[TaskParser],
         systemone: SystemOneClient,
         fallback: FallbackClient,
+        stats: BridgeStats | None = None,
     ) -> None:
         self._parsers = parsers
         self._systemone = systemone
         self._fallback = fallback
+        self._stats = stats
 
     async def handle_chat_completions(self, body: dict[str, Any]) -> RoutingResult:
         model = str(body.get("model") or "")
         wants_stream = bool(body.get("stream"))
+        self._record_request()
         if not model.startswith(ROUTED_MODEL_PREFIX):
             return await self._passthrough(body, via="passthrough.direct")
         request = extract_request(body)
@@ -54,6 +58,7 @@ class NorthboundRouter:
             parsed = parser.parse(request)
         except ParseError as exc:
             logger.warning("parser=%s 解析失败：%s；直通回退", parser.name, exc)
+            self._record_error("passthrough.parse_error", "parse_error", f"{parser.name}: {exc}")
             return await self._passthrough(body, via="passthrough.parse_error")
         try:
             answers = await self._systemone.decide(parsed.state, parsed.questions)
@@ -61,22 +66,27 @@ class NorthboundRouter:
             logger.warning(
                 "parser=%s SystemOne %s；直通回退", parser.name, exc
             )
-            return await self._passthrough(body, via=f"passthrough.systemone_{exc.category}")
+            via = f"passthrough.systemone_{exc.category}"
+            self._record_error(via, f"systemone_{exc.category}", f"{parser.name}: {exc}")
+            return await self._passthrough(body, via=via)
         try:
             response_body = parser.build_response(request, parsed, answers)
         except ParseError as exc:
             logger.warning("parser=%s 响应合成失败：%s；直通回退", parser.name, exc)
+            self._record_error("passthrough.build_error", "build_error", f"{parser.name}: {exc}")
             return await self._passthrough(body, via="passthrough.build_error")
         logger.info(
             "model=%s parser=%s 决策完成（via=systemone.%s, notes=%s）",
             model, parser.name, parser.name, parsed.notes,
         )
+        via = f"systemone.{parser.name}"
+        self._record_route(via)
         if wants_stream:
             return RoutingResult(
                 stream=_single_chunk_stream(response_body),
-                via=f"systemone.{parser.name}",
+                via=via,
             )
-        return RoutingResult(payload=response_body, via=f"systemone.{parser.name}")
+        return RoutingResult(payload=response_body, via=via)
 
     def _match_parser(self, request: NorthboundRequest) -> TaskParser | None:
         for parser in self._parsers:
@@ -87,7 +97,26 @@ class NorthboundRouter:
                 logger.exception("parser=%s detect 异常", getattr(parser, "name", "?"))
         return None
 
+    def _record_request(self) -> None:
+        """请求总数打点（未接统计器时为空操作）。"""
+
+        if self._stats is not None:
+            self._stats.record_request()
+
+    def _record_route(self, via: str) -> None:
+        """路由决策打点（未接统计器时为空操作）。"""
+
+        if self._stats is not None:
+            self._stats.record_route(via)
+
+    def _record_error(self, via: str, kind: str, detail: str) -> None:
+        """错误摘要打点（未接统计器时为空操作）。"""
+
+        if self._stats is not None:
+            self._stats.record_error(via, kind, detail)
+
     async def _passthrough(self, body: dict[str, Any], via: str) -> RoutingResult:
+        self._record_route(via)
         if body.get("stream"):
             return RoutingResult(
                 stream=self._fallback.forward_stream(body), via=via + ".stream"

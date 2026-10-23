@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>systemone-bridge 控制台</title>
+<style>
+  :root {
+    --bg: #f4f6fa;
+    --card: #ffffff;
+    --border: #e3e8f0;
+    --text: #2b3445;
+    --muted: #7a8699;
+    --accent: #4f6ef2;
+    --accent-weak: #eef1fe;
+    --ok: #1f9d61;
+    --ok-bg: #e9f8f0;
+    --bad: #d64545;
+    --bad-bg: #fdeeee;
+    --warn: #b7791f;
+    --warn-bg: #fdf6e7;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  }
+  header {
+    padding: 20px 24px 8px; max-width: 860px; margin: 0 auto;
+  }
+  header h1 { font-size: 20px; margin: 0 0 2px; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  header .sub b { color: var(--accent); font-weight: 600; }
+  main { max-width: 860px; margin: 0 auto; padding: 12px 24px 120px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(30, 40, 70, .04);
+  }
+  .card h2 { font-size: 15px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+  .card .desc { color: var(--muted); font-size: 12.5px; margin: 0 0 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 16px; }
+  label { display: block; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+  input[type=text], input[type=number], input[type=password] {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+    font: inherit; color: var(--text); background: #fbfcfe; outline: none;
+  }
+  input:focus { border-color: var(--accent); background: #fff; }
+  .field-wide { grid-column: 1 / -1; }
+  .toggle-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; }
+  .toggle-row input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); }
+  .toggle-row .t-label { font-size: 13.5px; color: var(--text); }
+  .toggle-row .t-hint { font-size: 12px; color: var(--muted); }
+  button {
+    font: inherit; cursor: pointer; border: none; border-radius: 8px; padding: 8px 16px;
+  }
+  .btn-secondary {
+    background: var(--accent-weak); color: var(--accent); font-size: 13px; padding: 6px 14px;
+  }
+  .btn-secondary:hover { filter: brightness(.96); }
+  .btn-save {
+    background: var(--accent); color: #fff; font-size: 14px; padding: 10px 28px;
+    box-shadow: 0 2px 6px rgba(79, 110, 242, .35);
+  }
+  .btn-save:hover { filter: brightness(1.05); }
+  .btn-save:disabled { opacity: .6; cursor: default; }
+  .test-row { margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .result {
+    font-size: 12.5px; padding: 7px 12px; border-radius: 8px; display: none;
+    max-width: 100%; word-break: break-all;
+  }
+  .result.ok { display: block; background: var(--ok-bg); color: var(--ok); }
+  .result.bad { display: block; background: var(--bad-bg); color: var(--bad); }
+  /* 运行状态卡 */
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat-box { background: #f8f9fd; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .stat-box .num { font-size: 22px; font-weight: 700; color: var(--accent); }
+  .stat-box .cap { font-size: 12px; color: var(--muted); }
+  .routes { margin-top: 12px; font-size: 12.5px; color: var(--muted); }
+  .routes code {
+    background: var(--accent-weak); color: var(--accent); border-radius: 5px; padding: 1px 7px; margin-right: 6px;
+  }
+  .errors { margin: 10px 0 0; padding: 0; list-style: none; font-size: 12.5px; }
+  .errors li { padding: 6px 10px; border-left: 3px solid var(--bad); background: var(--bad-bg);
+    color: #8c3a3a; border-radius: 0 6px 6px 0; margin-bottom: 6px; word-break: break-all; }
+  .errors .none { border: none; background: none; color: var(--muted); }
+  .errors .time { color: var(--muted); margin-right: 8px; }
+  /* 底部保存栏 */
+  .savebar {
+    position: fixed; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,.94);
+    border-top: 1px solid var(--border); backdrop-filter: blur(6px);
+  }
+  .savebar .inner { max-width: 860px; margin: 0 auto; padding: 12px 24px; display: flex; align-items: center; gap: 14px; }
+  .savebar .msg { font-size: 13px; flex: 1; word-break: break-all; }
+  .msg.ok { color: var(--ok); }
+  .msg.bad { color: var(--bad); }
+  .msg.warn { color: var(--warn); }
+  .footnote { color: var(--muted); font-size: 12px; margin-top: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>systemone-bridge 控制台</h1>
+  <div class="sub">北向 OpenAI 兼容接口 <b id="server-addr"></b> · v<span id="version">-</span> · 运行 <span id="uptime">-</span></div>
+</header>
+
+<main>
+  <!-- SystemOne 上游 -->
+  <section class="card">
+    <h2><span class="dot"></span>SystemOne 上游</h2>
+    <p class="desc">Intern-Decision 结构化决策服务（桥拼 /v1/decisions）。不可达 / 超时 / 报错时自动直通回退。</p>
+    <div class="grid">
+      <div class="field-wide"><label>服务地址 base_url</label><input type="text" id="sm-base" data-section="upstream_systemone" data-key="base_url"></div>
+      <div><label>API Key（留空则不发 Authorization）</label><input type="password" id="sm-key" data-section="upstream_systemone" data-key="api_key" autocomplete="off"></div>
+      <div><label>决策超时（秒）</label><input type="number" id="sm-timeout" step="0.5" min="1" data-section="upstream_systemone" data-key="timeout_seconds"></div>
+    </div>
+    <div class="test-row">
+      <button class="btn-secondary" id="btn-test-sm">测试连通</button>
+      <div class="result" id="result-sm"></div>
+    </div>
+  </section>
+
+  <!-- 回退上游 -->
+  <section class="card">
+    <h2><span class="dot"></span>回退上游</h2>
+    <p class="desc">OpenAI 兼容常规 LLM（默认 GLM）。任何回退都直通它——桥不比直接打这个上游更差。</p>
+    <div class="grid">
+      <div class="field-wide"><label>服务地址 base_url</label><input type="text" id="fb-base" data-section="fallback" data-key="base_url"></div>
+      <div><label>API Key</label><input type="password" id="fb-key" data-section="fallback" data-key="api_key" autocomplete="off"></div>
+      <div><label>模型 model</label><input type="text" id="fb-model" data-section="fallback" data-key="model"></div>
+      <div><label>超时（秒）</label><input type="number" id="fb-timeout" step="1" min="1" data-section="fallback" data-key="timeout_seconds"></div>
+    </div>
+    <div class="test-row">
+      <button class="btn-secondary" id="btn-test-fb">测试连通</button>
+      <div class="result" id="result-fb"></div>
+    </div>
+  </section>
+
+  <!-- 解析器 -->
+  <section class="card">
+    <h2><span class="dot"></span>解析器</h2>
+    <p class="desc">关闭后对应任务不识别、直接走直通回退；改动态参数对后续请求立即生效。</p>
+    <div class="toggle-row">
+      <input type="checkbox" id="parser-exprsel" data-section="task_parsers" data-key="expression_selector">
+      <div><div class="t-label">表达方式选择（MaiBot exprsel）</div>
+      <div class="t-hint">识别「候选表达方式：」清单，概率分布回填 selected_ids</div></div>
+    </div>
+    <div class="toggle-row">
+      <input type="checkbox" id="parser-df" data-section="task_parsers" data-key="df_check_planner">
+      <div><div class="t-label">DiceFrame 回合检定规划</div>
+      <div class="t-hint">识别 dice_checks 工具调用，合成合法 tool_calls 回包</div></div>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <div><label>exprsel 最低入选概率（0~1）</label><input type="number" id="tr-minp" step="0.01" min="0" max="1" data-section="translation" data-key="expression_min_probability"></div>
+      <div><label>exprsel 最多入选条数（0~62）</label><input type="number" id="tr-maxsel" step="1" min="0" max="62" data-section="translation" data-key="expression_max_selected"></div>
+    </div>
+  </section>
+
+  <!-- 服务与日志 -->
+  <section class="card">
+    <h2><span class="dot"></span>服务与日志</h2>
+    <p class="desc">改 host / port / 日志目录需重启服务后生效；日志级别保存即切换。</p>
+    <div class="grid">
+      <div><label>监听地址 host</label><input type="text" id="sv-host" data-section="server" data-key="host"></div>
+      <div><label>监听端口 port</label><input type="number" id="sv-port" step="1" data-section="server" data-key="port"></div>
+      <div><label>日志级别</label><input type="text" id="log-level" list="levels" data-section="logging" data-key="level">
+        <datalist id="levels"><option>DEBUG</option><option>INFO</option><option>WARNING</option><option>ERROR</option></datalist></div>
+      <div><label>日志目录</label><input type="text" id="log-dir" data-section="logging" data-key="dir"></div>
+    </div>
+  </section>
+
+  <!-- 运行状态 -->
+  <section class="card">
+    <h2><span class="dot"></span>运行状态 <span class="footnote" style="margin:0">每 5 秒自动刷新</span></h2>
+    <p class="desc">自启动以来的累计统计；systemone.* 为翻译路径命中，passthrough.* 为回退。</p>
+    <div class="stats-grid">
+      <div class="stat-box"><div class="num" id="st-total">-</div><div class="cap">总请求数</div></div>
+      <div class="stat-box"><div class="num" id="st-sys">-</div><div class="cap">SystemOne 命中</div></div>
+      <div class="stat-box"><div class="num" id="st-fb">-</div><div class="cap">直通回退</div></div>
+      <div class="stat-box"><div class="num" id="st-err">-</div><div class="cap">最近错误</div></div>
+    </div>
+    <div class="routes" id="st-routes"></div>
+    <ul class="errors" id="st-errors"></ul>
+  </section>
+</main>
+
+<!-- 底部保存栏 -->
+<div class="savebar">
+  <div class="inner">
+    <button class="btn-save" id="btn-save">保存配置</button>
+    <div class="msg" id="save-msg"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// 掩码占位后缀（与后端 MASK_SUFFIX 一致）：以此结尾的 api_key 提交后由后端保留旧值
+const MASK_SUFFIX = "***";
+
+const $ = (id) => document.getElementById(id);
+const msgBox = $("save-msg");
+
+function showMsg(text, cls) {
+  msgBox.textContent = text;
+  msgBox.className = "msg " + (cls || "");
+}
+
+// ---------- 配置加载与保存 ----------
+
+async function loadConfig() {
+  const config = await (await fetch("/api/config")).json();
+  document.querySelectorAll("[data-section]").forEach((input) => {
+    const section = config[input.dataset.section];
+    if (!section) return;
+    const value = section[input.dataset.key];
+    if (input.type === "checkbox") input.checked = Boolean(value);
+    else input.value = value === 0 ? "0" : (value ?? "");
+  });
+}
+
+async function saveConfig() {
+  const body = {};
+  document.querySelectorAll("[data-section]").forEach((input) => {
+    const section = (body[input.dataset.section] ??= {});
+    if (input.type === "checkbox") {
+      section[input.dataset.key] = input.checked;
+    } else if (input.type === "number") {
+      const num = Number(input.value);
+      section[input.dataset.key] = Number.isFinite(num) ? num : input.value;
+    } else {
+      section[input.dataset.key] = input.value;
+    }
+  });
+  const button = $("btn-save");
+  button.disabled = true;
+  showMsg("保存中…");
+  try {
+    const response = await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const detail = (data.details || []).map((d) => `${d.loc.join(".")}：${d.msg}`).join("；");
+      showMsg(`保存失败（未落盘）：${data.error || "未知错误"}${detail ? " — " + detail : ""}`, "bad");
+      return;
+    }
+    const notes = data.notes && data.notes.length ? "；" + data.notes.join("；") : "";
+    showMsg("已保存并热应用" + notes, notes ? "warn" : "ok");
+    await loadConfig(); // 回填掩码后的密钥占位
+    refreshStatus();
+  } catch (err) {
+    showMsg("保存失败：" + err, "bad");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+// ---------- 连通性测试 ----------
+
+// 只把用户改动过的字段作为覆盖项上送；掩码占位的 api_key 不上送（后端沿用当前配置的真实值）
+function testOverrides(section, fields) {
+  const overrides = {};
+  fields.forEach((id) => {
+    const input = $(id);
+    const value = input.value;
+    if (input.dataset.key === "api_key" && value.endsWith(MASK_SUFFIX)) return;
+    if (input.type === "number") {
+      const num = Number(value);
+      overrides[input.dataset.key] = Number.isFinite(num) ? num : value;
+    } else {
+      overrides[input.dataset.key] = value;
+    }
+  });
+  return overrides;
+}
+
+async function testUpstream(url, buttonId, resultId, section, fields) {
+  const box = $(resultId);
+  box.className = "result";
+  box.style.display = "block";
+  box.textContent = "测试中…";
+  $(buttonId).disabled = true;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(testOverrides(section, fields)),
+    });
+    const data = await response.json();
+    if (data.error) { box.className = "result bad"; box.textContent = "失败：" + data.error; return; }
+    const flag = data.ok ? "✓" : "✗";
+    const latency = data.latency_ms != null ? `，${data.latency_ms}ms` : "";
+    box.className = "result " + (data.ok ? "ok" : "bad");
+    box.textContent = `${flag} ${data.detail || data.category}${latency}`;
+  } catch (err) {
+    box.className = "result bad";
+    box.textContent = "失败：" + err;
+  } finally {
+    $(buttonId).disabled = false;
+  }
+}
+
+// ---------- 运行状态 ----------
+
+function fmtUptime(seconds) {
+  if (seconds < 60) return `${Math.floor(seconds)} 秒`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
+  return `${Math.floor(seconds / 3600)} 小时 ${Math.floor((seconds % 3600) / 60)} 分`;
+}
+
+async function refreshStatus() {
+  try {
+    const data = await (await fetch("/api/status")).json();
+    $("version").textContent = data.version || "-";
+    $("server-addr").textContent = data.server || "-";
+    $("uptime").textContent = fmtUptime(data.uptime_seconds || 0);
+    $("st-total").textContent = data.total_requests ?? 0;
+    $("st-sys").textContent = data.systemone_hits ?? 0;
+    $("st-fb").textContent = data.fallback_hits ?? 0;
+    const errors = data.recent_errors || [];
+    $("st-err").textContent = errors.length;
+    const routes = data.routes || {};
+    $("st-routes").innerHTML = Object.keys(routes).length
+      ? Object.entries(routes).map(([via, count]) => `<code>${via}</code>× ${count}`).join("　")
+      : "暂无请求";
+    $("st-errors").innerHTML = errors.length
+      ? errors.slice().reverse().map((e) =>
+          `<li><span class="time">${e.time}</span>[${e.via}] ${e.kind}：${e.detail}</li>`).join("")
+      : '<li class="none">暂无错误</li>';
+  } catch (err) { /* 状态刷新失败不打断页面 */ }
+}
+
+// ---------- 事件绑定 ----------
+
+$("btn-save").addEventListener("click", saveConfig);
+$("btn-test-sm").addEventListener("click", () => testUpstream(
+  "/api/test/systemone", "btn-test-sm", "result-sm", "upstream_systemone",
+  ["sm-base", "sm-key", "sm-timeout"]));
+$("btn-test-fb").addEventListener("click", () => testUpstream(
+  "/api/test/fallback", "btn-test-fb", "result-fb", "fallback",
+  ["fb-base", "fb-key", "fb-model", "fb-timeout"]));
+
+loadConfig().catch((err) => showMsg("配置加载失败：" + err, "bad"));
+refreshStatus();
+setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>

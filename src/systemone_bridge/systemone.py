@@ -33,6 +33,11 @@ class SystemOneClient:
         self._config = config
         self._session = session
 
+    def update_config(self, config: Any) -> None:
+        """热应用新配置（WebUI 保存后对后续请求立即生效，不重启）。"""
+
+        self._config = config
+
     def _url(self) -> str:
         return self._config.base_url.rstrip("/") + "/v1/decisions"
 
