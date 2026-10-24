@@ -31,14 +31,18 @@ def _choice(options: list[str], best: str) -> dict:
     }
 
 
-def _score(criteria: dict[str, str], best_key: str) -> dict:
-    probabilities = {key: (0.7 if key == best_key else 0.3 / (len(criteria) - 1)) for key in criteria}
+def _score(levels: list[str], best_value: str) -> dict:
+    """伪造 OpenXLab 网关 score 答案：索引概率 + legend 映射档位值，峰值给 best_value。"""
+    best_index = levels.index(best_value)
+    probabilities = {
+        str(i): (0.7 if i == best_index else 0.3 / (len(levels) - 1))
+        for i in range(len(levels))
+    }
     return {
         "probabilities": probabilities,
-        "confidence": probabilities[best_key],
-        "decision": best_key,
-        "score": sum(float(key) * p for key, p in probabilities.items()),
-        "legend": dict(criteria),
+        "confidence": probabilities[str(best_index)],
+        "score": best_index,
+        "legend": {str(i): levels[i] for i in range(len(levels))},
         "type": "score",
     }
 
@@ -70,8 +74,9 @@ def test_parse_d20_two_players() -> None:
     }
     dc = parsed.questions["p0_dc"]
     assert dc["type"] == "score"
-    # score 题必须用数字字符串键，保证期望分即真实 DC
-    assert set(dc["criteria"].keys()) == {"10", "15", "20", "25"}
+    # OpenXLab 网关要求 score 题 criteria 为档位数组（升序，DC 数值由答案 argmax 还原）
+    assert dc["criteria"] == ["10", "15", "20", "25"]
+    assert "DC10" in dc["instructions"]
     stat = parsed.questions["p0_stat"]
     assert set(stat["criteria"].keys()) == {
         "strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma",
@@ -159,9 +164,9 @@ def test_build_response_mixed_needs_check() -> None:
     assert entry["player"] == "u1"
     assert entry["kind"] == "check"
     assert entry["attribute"] == "strength"
-    # score 题答案为期望分：0.7×20 + 0.1×(10+15+25) = 19.0 → target 19
-    assert entry["target"] == 19
-    assert "19" in entry["dc_reason"]
+    # 网关 score 答案按 argmax 档位还原 DC：峰值 0.7 在「20」档 → target 20
+    assert entry["target"] == 20
+    assert "DC20" in entry["dc_reason"]
     assert entry["advantage"] == "normal"
     assert "听动静" in entry["reason"]
 
@@ -192,14 +197,17 @@ def test_build_response_d100_skill_vs_attribute() -> None:
 
 def test_build_response_dc_clamped_to_max() -> None:
     parser = DfCheckPlannerParser()
-    request = extract_request(build_df_request([make_df_player("u1")], max_check_dc=25))
+    # 自定义 dc_table 让 argmax 档位（30）超过 max_check_dc=25 → 被夹取
+    request = extract_request(
+        build_df_request([make_df_player("u1")], max_check_dc=25, dc_table={"easy": 10, "hard": 30})
+    )
     parsed = parser.parse(request)
     answers = {
         "p0_needs_check": _noul(0.9),
         "p0_kind": _choice(["check", "attack", "save"], "check"),
         "p0_stat": _choice(list(parsed.questions["p0_stat"]["criteria"].keys()), "strength"),
-        # 极端期望分 99 → 被夹到 max_check_dc=25
-        "p0_dc": {"score": 99.0, "legend": {"10": "easy"}, "probabilities": {"10": 1.0}, "decision": "10", "type": "score"},
+        # argmax 档位 30 → 被夹到 max_check_dc=25
+        "p0_dc": _score(parsed.questions["p0_dc"]["criteria"], "30"),
     }
     response = parser.build_response(request, parsed, answers)
     entry = json.loads(response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["checks"][0]

@@ -184,33 +184,73 @@ class DfCheckPlannerParser:
                 return None
             check["attribute"] = stat
             dc_answer = answers.get(f"p{index}_dc") or {}
-            expected = dc_answer.get("score")
-            if not isinstance(expected, (int, float)):
+            target, confidence = _argmax_dc(dc_answer)
+            if target is None:
                 return None
-            target = int(round(float(expected)))
             target = min(max(target, 1), 100)
             if isinstance(max_dc, int) and max_dc > 0:
                 target = min(target, max_dc)
             check["target"] = target
-            check["dc_reason"] = _dc_reason(dc_answer, expected, dc_table)
+            check["dc_reason"] = _dc_reason(dc_answer, target, confidence, dc_table)
         action = str(player.get("action") or "")
         if action:
             check["reason"] = f"行动：{action[:140]}"
         return check
 
 
-def _dc_reason(
-    dc_answer: dict[str, Any], expected: float, dc_table: dict[str, Any]
-) -> str:
-    """给出可审计的 DC 依据；legend 缺失时退化为期望分陈述。"""
+def _argmax_dc(dc_answer: dict[str, Any]) -> tuple[int | None, float]:
+    """从 score 答案还原 argmax 档位的 DC 值，兼容两种上游形状。
 
-    legend = dc_answer.get("legend")
+    - OpenXLab 网关：probabilities 按索引（"0","1",…）+ legend 映射档位值；
+    - 官方 serving：probabilities 键即档位值（数字字符串）。
+    返回 (dc, confidence)；形状不合法返回 (None, 0.0)。
+    """
+
+    probabilities = dc_answer.get("probabilities")
+    if not isinstance(probabilities, dict) or not probabilities:
+        return None, 0.0
+    legend = dc_answer.get("legend") if isinstance(dc_answer.get("legend"), dict) else {}
+    best_key: str | None = None
+    best_prob = -1.0
+    for key, prob in probabilities.items():
+        try:
+            value = float(prob)
+        except (TypeError, ValueError):
+            continue
+        if value > best_prob:
+            best_prob = value
+            best_key = str(key)
+    if best_key is None:
+        return None, 0.0
+    # 候选依次尝试：legend 映射值（网关形状）→ 概率键本身（值键形状）。
+    # legend 值可能是非整数（描述文本或概率副本），失败即回落，两种上游形状都兼容。
+    candidates = []
+    if legend:
+        candidates.append(legend.get(best_key))
+    candidates.append(best_key)
+    for candidate in candidates:
+        try:
+            return int(str(candidate)), max(best_prob, 0.0)
+        except (TypeError, ValueError):
+            continue
+    return None, 0.0
+
+
+def _dc_reason(
+    dc_answer: dict[str, Any], target: int, confidence: float, dc_table: dict[str, Any]
+) -> str:
+    """给出可审计的 DC 依据：argmax 档位 + 置信度。"""
+
     label = ""
-    if isinstance(legend, dict):
-        nearest = min(legend, key=lambda key: abs(float(key) - expected))
-        label = str(legend.get(nearest) or "")
-    suffix = f"（近似档位：{label}）" if label else ""
-    return f"SystemOne 期望难度分 {expected:.2f}{suffix}"[:160]
+    for key, value in dc_table.items():
+        try:
+            if int(value) == target:
+                label = str(key)
+                break
+        except (TypeError, ValueError):
+            continue
+    suffix = f"（档位：{label}）" if label else ""
+    return f"Decision argmax 档位 DC{target}，置信度 {confidence:.2f}{suffix}"[:160]
 
 
 def _attribute_keys(ruleset: dict[str, Any]) -> list[str]:
@@ -290,19 +330,23 @@ def _clean_player(
         "criteria": stat_criteria,
     }
     if dice_system == "d20":
-        dc_criteria: dict[str, str] = {}
+        # OpenXLab 托管网关要求 score 题 criteria 为档位数组（官方 serving 的键对象形状会被 400
+        # "must be an array of levels"）；网关答案按索引给概率 + legend 映射，DC 数值由
+        # build_response 侧按 argmax 档位还原。档位描述拼进 instructions。
+        dc_pairs: list[tuple[int, str]] = []
         for key, value in dc_table.items():
             try:
-                dc_value = int(value)
+                dc_pairs.append((int(value), str(key)))
             except (TypeError, ValueError):
                 continue
-            dc_criteria[str(dc_value)] = str(key)
-        if not dc_criteria:
+        if not dc_pairs:
             raise ParseError("d20 规则集 dc_table 为空或非法")
+        dc_pairs.sort()
+        levels_desc = "／".join(f"DC{value}（{label}）" for value, label in dc_pairs)
         questions[f"p{index}_dc"] = {
             "type": "score",
-            "instructions": f"{label} 该行动任务本身的客观难度（DC）是多少？",
-            "criteria": dc_criteria,
+            "instructions": f"{label} 该行动任务本身的客观难度（DC）是多少？档位：{levels_desc}",
+            "criteria": [str(value) for value, _ in dc_pairs],
         }
 
     return {

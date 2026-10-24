@@ -109,4 +109,12 @@ class SystemOneClient:
                     answer.setdefault("decision", "yes" if p_yes >= 0.5 else "no")
                 else:
                     raise SystemOneError("bad_response", f"answers.{name} 缺少 probabilities")
+            elif not answer.get("decision"):
+                # 网关 choice 答案的 decision 为 null、值在 choice 字段（实测 2026-10-24）；
+                # 按 choice 字段或 probabilities 峰值补齐，北向解析器统一按官方规格取 decision。
+                probabilities = answer["probabilities"]
+                fallback = answer.get("choice")
+                if not (isinstance(fallback, str) and fallback):
+                    fallback = max(probabilities, key=lambda k: float(probabilities[k]))
+                answer["decision"] = str(fallback)
         return answers
