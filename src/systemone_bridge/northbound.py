@@ -62,7 +62,9 @@ class NorthboundRouter:
             raise BridgeError(400, "invalid_request", str(exc), "invalid_request_error")
         parser = self._match_parser(request)
         if parser is None:
-            logger.info("model=%s 无解析器锚点，返回 422 unknown_template", model)
+            # 混合 model_list 架构下的常态预期流量（生成型任务 422 后由调用方切下一模型），
+            # 仅计数与 debug 日志，不逐条刷 info（stats 里看累计即可）。
+            logger.debug("model=%s 无解析器锚点，返回 422 unknown_template", model)
             self._record_error("unknown_template", f"model={model} 不匹配任何已启用解析器")
             raise BridgeError(
                 422,
