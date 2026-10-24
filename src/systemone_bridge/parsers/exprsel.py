@@ -33,8 +33,8 @@ _MAX_OPTIONS = 62
 # 输入 token 预算：Decision-4B 上下文 8K（OpenXLab 实测超限返回 400
 # "estimated input tokens exceed the model's context limit"）。候选清单（system，~50 条
 # ≈2-3K tokens）+ state（recent_chat 聊天历史，随会话变长）必须合计压在预算内。
-# 中文 ≈1 字/token，保守按字符数估；历史只保留最近消息（表达选择本就只看近期语境）。
-_CONTEXT_CHAR_BUDGET = 4000  # recent_chat 合计字符上限
+# 中文按字符数×1.5 保守估 token；历史只保留最近消息（表达选择本就只看近期语境）。
+_CONTEXT_CHAR_BUDGET = 4000  # recent_chat 合计字符上限（≈6K tokens，给候选与指令留足余量）
 
 
 def _trim_context(user_texts: list[str], budget: int) -> list[str]:
@@ -50,12 +50,6 @@ def _trim_context(user_texts: list[str], budget: int) -> list[str]:
         used += length
     kept.reverse()
     return kept
-
-# 输入 token 预算：Decision-4B 上下文 8K（OpenXLab 实测超限返回 400
-# "estimated input tokens exceed the model's context limit"）。候选清单（system，~50 条
-# ≈2-3K tokens）+ state（recent_chat 聊天历史，随会话变长）必须合计压在预算内。
-# 中文 ≈1 字/token，保守按字符数×1.5 估 token；历史只保留最近消息（表达选择本就只看近期语境）。
-_CONTEXT_CHAR_BUDGET = 4000  # recent_chat 合计字符上限（≈6K tokens，给候选与指令留足余量）
 
 
 class ExpressionSelectorParser:

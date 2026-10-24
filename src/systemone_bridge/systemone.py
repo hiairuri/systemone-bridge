@@ -11,10 +11,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 import asyncio
 import json
 import logging
-from typing import Any
 
 import aiohttp
 
@@ -26,6 +28,14 @@ class SystemOneError(Exception):
         self.category = category
         self.detail = detail
         super().__init__(f"[{category}] {detail}")
+
+
+@dataclass
+class SystemOneReply:
+    """南向决策结果：answers 为归一化 Jev 答案，usage 为上游 usage 原文（缺省 None）。"""
+
+    answers: dict[str, dict[str, Any]]
+    usage: dict[str, Any] | None = None
 
 
 class SystemOneClient:
@@ -54,8 +64,8 @@ class SystemOneClient:
         state: Any,
         questions: dict[str, dict[str, Any]],
         images: list[dict[str, Any]] | None = None,
-    ) -> dict[str, dict[str, Any]]:
-        """调用决策端点，成功返回 answers 字典；任何失败抛 SystemOneError。"""
+    ) -> SystemOneReply:
+        """调用决策端点，成功返回归一化答案与上游 usage；任何失败抛 SystemOneError。"""
 
         payload: dict[str, Any] = {"state": state, "questions": questions}
         # model 字段按配置注入（OpenXLab 网关校验必需）；留空则不注入，保持官方 serving 兼容
@@ -71,7 +81,7 @@ class SystemOneClient:
             ) as response:
                 body_text = await response.text()
                 if response.status == 200:
-                    return self._extract_answers(body_text)
+                    return self._extract_envelope(body_text)
                 detail = body_text[:300]
                 if response.status >= 500:
                     raise SystemOneError(
@@ -88,7 +98,7 @@ class SystemOneClient:
             raise SystemOneError("unreachable", str(exc))
 
     @staticmethod
-    def _extract_answers(body_text: str) -> dict[str, dict[str, Any]]:
+    def _extract_envelope(body_text: str) -> SystemOneReply:
         try:
             data = json.loads(body_text)
         except json.JSONDecodeError as exc:
@@ -117,4 +127,5 @@ class SystemOneClient:
                 if not (isinstance(fallback, str) and fallback):
                     fallback = max(probabilities, key=lambda k: float(probabilities[k]))
                 answer["decision"] = str(fallback)
-        return answers
+        usage = data.get("usage") if isinstance(data, dict) else None
+        return SystemOneReply(answers=answers, usage=usage if isinstance(usage, dict) else None)

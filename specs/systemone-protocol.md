@@ -136,7 +136,8 @@ pipeline 层完成。【已确认】
 | 409 | 同一 thinking 任务已在运行 | `{"detail": …}` |
 
 主端点**无流式**；网络层错误（连接拒绝/超时）由客户端自行分类。桥的错误分类据此设：
-连接失败 / 非粘超时 / 5xx（含 503）/ 4xx（请求被拒——视为翻译产物不合法，也要回退）。
+连接失败 / 非粘超时 / 5xx（含 503）/ 4xx（请求被拒——视为翻译产物不合法），北向统一映射为
+502 upstream_error，是否回退由调用方决定。
 
 ## 6. 部署形态【已确认 + 推测】
 
@@ -145,15 +146,18 @@ pipeline 层完成。【已确认】
 - 无 Docker、无 vLLM 集成（仓库内未见）。启动方式为 uvicorn 拉起 `src.service.app:app`。【已确认（代码结构）】
 - 【推测】未来第三方托管/本地 CPU 量化部署都仍会暴露同一 `/v1/decisions` 契约——桥只依赖 HTTP 契约，
   与部署形态解耦。
-- 【环境事实】截至本 mission 当日，公开托管端点不存在（OpenXLab 未托管 Decision 系列）——
-  桥 v1 以透传代理形态先行部署是设计预期。
+- 【环境事实】2026-10-24 起 OpenXLab 已托管 书生-Decision-4B（网关路径 `/v1/systemone`，
+  顶层 model 字段必填）——本项目桥以纯协议转换器形态对接该托管端点（见 §7）。
 
 ## 7. 桥的翻译映射约定（本项目设计决策，非官方协议）
 
 北向 OpenAI `/v1/chat/completions` → 南向 `/v1/decisions` 的映射由各任务解析器产出（见
 `src/systemone_bridge/parsers/`），共同约束：
 
-1. 解析器只做**确定性模板识别**，识别失败 → 请求原样直通 fallback 上游（GLM），并计日志。
+1. 解析器只做**确定性模板识别**，识别失败 → 北向 422 unknown_template（计入非决策请求）。
+   不做任何直通/回退——由调用方切换下一模型（MaiBot 混合 model_list 天然具备该语义）。
 2. state 放对话/情境证据；候选项进 choice 题的 criteria（选项值必须可回填北向响应格式）。
-3. 候选 >62 / 题目 >16 等 SystemOne 硬限制无法承载时，同样直通回退（绝不截断语义）。
-4. 南向任何失败（连接/超时/5xx/422）→ 直通回退；回退响应必须与"现状"（直接打 GLM）等价。
+3. 候选 >62 / 题目 >16 等 SystemOne 硬限制无法承载时 → 422 bad_template（绝不截断语义，不降级）。
+4. 南向任何失败（连接/超时/5xx/422）→ 502 upstream_error；回退由调用方负责。
+5. 上游 `usage` 透传为 OpenAI `usage`：`input_tokens→prompt_tokens`、`output_tokens→completion_tokens`
+   （output 计打分字段数而非生成 token，见 §4）；上游缺 usage 时北向响应同样不带 usage 字段。

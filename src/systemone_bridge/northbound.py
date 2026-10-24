@@ -27,6 +27,27 @@ class BridgeError(Exception):
         super().__init__(f"[{status}/{code}] {message}")
 
 
+def _openai_usage(upstream: dict[str, Any] | None) -> dict[str, int] | None:
+    """把上游 SystemOne usage 透传为 OpenAI usage 形状。
+
+    input_tokens→prompt_tokens、output_tokens→completion_tokens（上游 output 计打分
+    字段数而非生成 token，见 specs/systemone-protocol.md §4）；上游未回报 usage 或两
+    计数皆缺时返回 None，北向响应不携带 usage 字段（与 OpenAI 语义一致：字段可选）。
+    """
+
+    if not isinstance(upstream, dict):
+        return None
+    prompt = int(upstream.get("input_tokens") or 0)
+    completion = int(upstream.get("output_tokens") or 0)
+    if prompt <= 0 and completion <= 0:
+        return None
+    return {
+        "prompt_tokens": prompt,
+        "completion_tokens": completion,
+        "total_tokens": prompt + completion,
+    }
+
+
 class NorthboundRouter:
     def __init__(
         self,
@@ -82,7 +103,7 @@ class NorthboundRouter:
                 "invalid_request_error",
             )
         try:
-            answers = await self._systemone.decide(parsed.state, parsed.questions)
+            reply = await self._systemone.decide(parsed.state, parsed.questions)
         except SystemOneError as exc:
             # 原四分类（unreachable/server_error/rejected/bad_response）并入错误 message
             logger.warning("parser=%s SystemOne %s；返回 502 upstream_error", parser.name, exc)
@@ -91,13 +112,17 @@ class NorthboundRouter:
                 502, "upstream_error", f"SystemOne 决策调用失败：{exc}", "api_error"
             )
         try:
-            response_body = parser.build_response(request, parsed, answers)
+            response_body = parser.build_response(request, parsed, reply.answers)
         except ParseError as exc:
             logger.warning("parser=%s 响应合成失败：%s；返回 500", parser.name, exc)
             self._record_error("build_error", f"{parser.name}: {exc}")
             raise BridgeError(
                 500, "build_error", f"决策结果合成响应失败（{parser.name}）：{exc}", "api_error"
             )
+        usage = _openai_usage(reply.usage)
+        if usage is not None:
+            # 上游 usage 真实透传（input→prompt、output→completion），供调用方 token 统计
+            response_body["usage"] = usage
         logger.info(
             "model=%s parser=%s 决策完成（via=systemone.%s, notes=%s）",
             model, parser.name, parser.name, parsed.notes,

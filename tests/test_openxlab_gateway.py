@@ -40,11 +40,12 @@ async def test_default_config_keeps_official_shape() -> None:
     try:
         async with ClientSession() as session:
             client = SystemOneClient(config, session)
-            answers = await client.decide(state="状态", questions={"f": {"type": "choice", "criteria": {"a": "甲", "b": "乙"}}})
+            reply = await client.decide(state="状态", questions={"f": {"type": "choice", "criteria": {"a": "甲", "b": "乙"}}})
     finally:
         await runner.cleanup()
 
-    assert answers["f"]["choice"] == "a"
+    assert reply.answers["f"]["choice"] == "a"
+    assert reply.usage == {"input_tokens": 1, "output_tokens": 1, "decision_count": 1}
     (path, body) = received[0]
     assert path == "/v1/decisions"
     assert "model" not in body  # 官方 serving 兼容：不注入 model
@@ -70,11 +71,12 @@ async def test_openxlab_shape_path_and_model_injection() -> None:
     try:
         async with ClientSession() as session:
             client = SystemOneClient(config, session)
-            answers = await client.decide(state="状态", questions={"f": {"type": "choice", "criteria": {"a": "甲", "b": "乙"}}})
+            reply = await client.decide(state="状态", questions={"f": {"type": "choice", "criteria": {"a": "甲", "b": "乙"}}})
     finally:
         await runner.cleanup()
 
-    assert answers["f"]["choice"] == "a"
+    assert reply.answers["f"]["choice"] == "a"
+    assert reply.usage == {"input_tokens": 1, "output_tokens": 1, "decision_count": 1}
     (path, body) = received[0]
     assert path == "/v1/systemone"  # OpenXLab 网关路径
     assert body["model"] == "intern-decision-4b"  # 网关校验必需的顶层 model
@@ -121,6 +123,8 @@ async def test_openxlab_gateway_end_to_end(tmp_path, http_client: ClientSession)
     # 回包是合法 chat completion，内容含决策结果
     assert data["object"] == "chat.completion"
     assert data["model"] == "intern-decision-4b"
+    # 上游 usage 透传为 OpenAI usage（mock：input_tokens=128、output_tokens=答案数）
+    assert data["usage"] == {"prompt_tokens": 128, "completion_tokens": 1, "total_tokens": 129}
     content = json.loads(data["choices"][0]["message"]["content"])
     assert set(content.keys()) == {"selected_ids"}
     assert isinstance(content["selected_ids"], list) and content["selected_ids"]
@@ -149,7 +153,7 @@ async def test_openxlab_noul_minimal_answer_normalized() -> None:
     try:
         async with ClientSession() as session:
             client = SystemOneClient(config, session)
-            answers = await client.decide(
+            reply = await client.decide(
                 state={"task": "审核"},
                 questions={
                     "suitability": {
@@ -162,11 +166,28 @@ async def test_openxlab_noul_minimal_answer_normalized() -> None:
     finally:
         await runner.cleanup()
 
-    answer = answers["suitability"]
+    answer = reply.answers["suitability"]
     p = answer["noul"]
     assert answer["probabilities"] == {"no": 1.0 - p, "yes": p}
     assert answer["decision"] == "yes"  # P(yes) ≥ 0.5
+    # 上游 usage 原样带回，北向响应按 OpenAI 形状透传
+    assert reply.usage == {"input_tokens": 241, "output_tokens": 12}
     # 南向请求带 noul criteria（网关 400 校验必需）与 instructions
     question = received[0]["questions"]["suitability"]
     assert question["criteria"] == {"true": "适合", "false": "不适合"}
     assert question["instructions"]
+
+
+def test_openai_usage_mapping() -> None:
+    """usage 透传映射：None/空 → None（北向不带 usage 字段）；缺项按 0 计。"""
+
+    from systemone_bridge.northbound import _openai_usage
+
+    assert _openai_usage(None) is None
+    assert _openai_usage({}) is None
+    assert _openai_usage({"input_tokens": 241}) == {
+        "prompt_tokens": 241, "completion_tokens": 0, "total_tokens": 241}
+    assert _openai_usage({"output_tokens": 12}) == {
+        "prompt_tokens": 0, "completion_tokens": 12, "total_tokens": 12}
+    assert _openai_usage({"input_tokens": 128, "output_tokens": 1}) == {
+        "prompt_tokens": 128, "completion_tokens": 1, "total_tokens": 129}

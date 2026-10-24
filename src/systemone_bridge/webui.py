@@ -284,11 +284,11 @@ async def probe_systemone(
     }
     start = time.perf_counter()
     try:
-        answers = await client.decide(state, questions)
+        reply = await client.decide(state, questions)
     except SystemOneError as exc:
         return {"ok": False, "category": exc.category, "detail": str(exc.detail or exc)}
     latency_ms = round((time.perf_counter() - start) * 1000, 1)
-    answer = answers.get("ping") if isinstance(answers.get("ping"), dict) else {}
+    answer = reply.answers.get("ping") if isinstance(reply.answers.get("ping"), dict) else {}
     decision = str(answer.get("choice") or answer.get("decision") or "")
     return {
         "ok": True,

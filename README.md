@@ -62,6 +62,10 @@ DiceFrame 检定 ──┘                                          │
 
 - **纯转换，无回退**：模型名不参与路由（任意模型名一律尝试解析器）；解析失败、
   SystemOne 失败等都返回明确错误码，绝不代理给其他 LLM。
+- **usage 透传**：上游 SystemOne 的 `usage` 原样映射为 OpenAI `usage`
+  （`input_tokens→prompt_tokens`、`output_tokens→completion_tokens`）。注意上游
+  `output_tokens` 计的是打分字段数而非生成 token（见 `specs/systemone-protocol.md` §4）；
+  上游未回报 usage 时响应同样不带 usage 字段。
 - **任务解析器**（v1 五个）：
   - `expression_selector`：MaiBot 表达方式选择。识别 system 消息中的「候选表达方式：」清单
     （`id: 情景=… | 风格=…`），候选 → 单题 choice（实测候选 5–50 条，≤62 选项硬限制），
