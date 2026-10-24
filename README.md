@@ -184,3 +184,10 @@ uv run pytest tests/ -q     # 55 用例：真实快照解析 / DF 合成 / 各�
 `POST /v1/systemone` 且要求请求体顶层 `model` 字段——两者通过 `[upstream_systemone]`
 的 `decisions_path` / `model` 配置项切换，字段级差异见
 [specs/systemone-protocol.md](specs/systemone-protocol.md)。
+
+## 许可证 / License
+
+以 [AGPL-3.0-or-later](LICENSE) 发布。Copyright (C) 2026 systemone-bridge contributors。
+This program is free software: you can redistribute it and/or modify it under the terms
+of the GNU Affero General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version.
