@@ -1,5 +1,41 @@
 # systemone-bridge
 
+## English
+
+**systemone-bridge** is a local protocol bridge that translates OpenAI-compatible
+`/v1/chat/completions` requests (northbound) into Intern-Decision "SystemOne"
+`/v1/decisions` structured decision calls (southbound), with **graceful fallback**:
+whenever anything fails (template not recognized, SystemOne unreachable, timeout,
+4xx/5xx), the original request passes through untouched to a regular LLM upstream —
+so the bridge is never worse than not using it.
+
+- **Model-name routing** — `model` starting with `intern-decision-` goes through the
+  translation path; everything else is proxied as-is.
+- **Built-in task parsers (v1)** — MaiBot expression selection (`expression_selector`)
+  and DiceFrame check planning (`df_check_planner`), producing probability-backed
+  answers or OpenAI `tool_calls`.
+- **WebUI console** — served at the bridge root: config editing with hot reload,
+  upstream connectivity tests, and live routing stats. Local-only by design.
+- **License**: AGPL-3.0-or-later.
+
+Quick start (Python 3.12, managed with [uv](https://docs.astral.sh/uv/)):
+
+```powershell
+.\start.ps1    # auto uv sync on first run; config.toml auto-generated from the example template
+```
+
+```bash
+# equivalent on Linux/macOS
+uv sync
+uv run systemone-bridge --config config.toml
+```
+
+Full documentation is in Chinese below; the field-level protocol spec (mined from the
+official Intern-Decision sources) lives in
+[specs/systemone-protocol.md](specs/systemone-protocol.md).
+
+---
+
 本地协议桥：把 **OpenAI 兼容的 `/v1/chat/completions`**（北向）翻译成
 **Intern-Decision「SystemOne」`/v1/decisions` 结构化决策协议**（南向），
 并在任何一环失败时**原样直通回退**到常规 LLM 上游（默认 GLM）——
@@ -40,7 +76,7 @@ DiceFrame 检定 ──┘                                          │
 ## 部署
 
 ```powershell
-cd D:\项目\systemone-bridge
+cd systemone-bridge                     # 仓库根目录
 .\start.ps1                            # 首次自动 uv sync；config.toml 缺失时自动从模板生成
 # 手动等价：uv sync ; uv run systemone-bridge --config config.toml
 ```
@@ -141,3 +177,10 @@ uv run pytest tests/ -q     # 55 用例：真实快照解析 / DF 合成 / 各�
 
 `tests/fixtures/` 含 4 份真实 MaiBot exprsel 快照与 DF 检定规划模板副本；
 `tests/mock_systemone.py` 按 P1 规格实现 mock（含官方校验语义与 422）。
+
+## 协议适配说明
+
+官方开源 serving 的决策端点是 `POST /v1/decisions`（默认），OpenXLab 托管网关则为
+`POST /v1/systemone` 且要求请求体顶层 `model` 字段——两者通过 `[upstream_systemone]`
+的 `decisions_path` / `model` 配置项切换，字段级差异见
+[specs/systemone-protocol.md](specs/systemone-protocol.md)。
