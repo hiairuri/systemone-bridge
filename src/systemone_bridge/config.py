@@ -27,13 +27,6 @@ class UpstreamSystemOneConfig(BaseModel):
     timeout_seconds: float = 10.0
 
 
-class FallbackConfig(BaseModel):
-    base_url: str = "https://open.bigmodel.cn/api/coding/paas/v4"
-    api_key: str = ""
-    model: str = "GLM-5.3-Flash"
-    timeout_seconds: float = 120.0
-
-
 class TaskParsersConfig(BaseModel):
     expression_selector: bool = True
     df_check_planner: bool = True
@@ -52,7 +45,6 @@ class LoggingConfig(BaseModel):
 class BridgeConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     upstream_systemone: UpstreamSystemOneConfig = UpstreamSystemOneConfig()
-    fallback: FallbackConfig = FallbackConfig()
     task_parsers: TaskParsersConfig = TaskParsersConfig()
     translation: TranslationConfig = TranslationConfig()
     logging: LoggingConfig = LoggingConfig()
@@ -89,15 +81,12 @@ _TOML_COMMENTS: dict[str, tuple[str, ...]] = {
     "server": ("监听地址/端口；改端口需重启服务生效",),
     "upstream_systemone": (
         "南向 SystemOne（Intern-Decision 决策端点）上游。",
-        "不可达/超时/报错时自动直通回退；api_key 留空则不发 Authorization。",
+        "纯协议转换器：决策失败时北向返回 502 upstream_error，回退由调用方负责；",
+        "api_key 留空则不发 Authorization。",
         "decisions_path：官方开源 serving 为 /v1/decisions，OpenXLab 托管网关为 /v1/systemone。",
         "model：注入请求体顶层 model 字段（网关校验必需）；留空则不注入，保持官方兼容。",
     ),
-    "fallback": (
-        "回退上游（OpenAI 兼容）：任何情况下桥不比直接打这个上游更差。",
-        "北向 model 指向 intern-decision-* 但被迫回退时改写为该 model。",
-    ),
-    "task_parsers": ("任务解析器开关：关闭后对应任务直接走直通回退",),
+    "task_parsers": ("任务解析器开关：关闭后对应任务不识别，北向返回 422 unknown_template",),
     "translation": ("exprsel 概率映射：最低入选概率与最多入选条数",),
     "logging": ("日志级别与目录",),
 }
@@ -106,7 +95,6 @@ _TOML_COMMENTS: dict[str, tuple[str, ...]] = {
 _TOML_KEY_ORDER: dict[str, tuple[str, ...]] = {
     "server": ("host", "port"),
     "upstream_systemone": ("base_url", "decisions_path", "api_key", "model", "timeout_seconds"),
-    "fallback": ("base_url", "api_key", "model", "timeout_seconds"),
     "task_parsers": ("expression_selector", "df_check_planner"),
     "translation": ("expression_min_probability", "expression_max_selected"),
     "logging": ("level", "dir"),

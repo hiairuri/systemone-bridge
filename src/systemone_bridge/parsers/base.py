@@ -8,7 +8,7 @@ from typing import Any, Protocol
 
 
 class ParseError(Exception):
-    """模板识别成功但结构化解析失败。调用方应直通回退并计日志。"""
+    """模板识别成功但结构化解析失败。北向统一映射为 422 bad_template。"""
 
 
 @dataclass

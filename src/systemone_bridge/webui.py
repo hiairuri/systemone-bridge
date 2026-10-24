@@ -1,4 +1,4 @@
-"""WebUI 后端：配置/状态/连通性测试 API 与首页静态页。
+"""WebUI 后端：配置/状态/决策连通性测试 API 与首页静态页。
 
 安全基线（本地服务，默认只绑 127.0.0.1）：
 - 任何 GET 响应中的 api_key 一律脱敏为「前 4 字符 + ***」；
@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -21,7 +20,6 @@ from pydantic import BaseModel, ValidationError
 
 from .appkeys import (
     KEY_CONFIG_PATH,
-    KEY_FALLBACK,
     KEY_RUNTIME,
     KEY_SESSION,
     KEY_STATS,
@@ -29,6 +27,7 @@ from .appkeys import (
 )
 from .config import BridgeConfig, UpstreamSystemOneConfig, dump_config_toml
 from .northbound import NorthboundRouter
+from .systemone import SystemOneClient, SystemOneError
 
 logger = logging.getLogger("systemone_bridge.webui")
 
@@ -38,7 +37,6 @@ MASK_SUFFIX = "***"
 # 脱敏字段 → 所属配置段（POST 保存时做掩码保留）
 _SECRET_FIELDS: dict[str, str] = {
     "upstream_systemone": "api_key",
-    "fallback": "api_key",
 }
 
 
@@ -106,7 +104,7 @@ def atomic_write_config(path: Any, config: BridgeConfig) -> None:
     os.replace(tmp_path, path)
 
 
-def build_router(config: BridgeConfig, systemone: Any, fallback: Any, stats: Any) -> NorthboundRouter:
+def build_router(config: BridgeConfig, systemone: Any, stats: Any) -> NorthboundRouter:
     """按当前配置装配解析器与北向路由器（启动与热应用共用）。"""
 
     from .parsers import DfCheckPlannerParser, ExpressionSelectorParser
@@ -121,7 +119,7 @@ def build_router(config: BridgeConfig, systemone: Any, fallback: Any, stats: Any
         )
     if config.task_parsers.df_check_planner:
         parsers.append(DfCheckPlannerParser())
-    return NorthboundRouter(parsers, systemone, fallback, stats=stats)
+    return NorthboundRouter(parsers, systemone, stats=stats)
 
 
 def apply_hot_config(app: web.Application, new_config: BridgeConfig) -> list[str]:
@@ -137,10 +135,9 @@ def apply_hot_config(app: web.Application, new_config: BridgeConfig) -> list[str
 
     # 上游客户端原位换配置：URL/密钥/超时在每次请求时读取，对后续请求即时生效
     app[KEY_SYSTEMONE].update_config(new_config.upstream_systemone)
-    app[KEY_FALLBACK].update_config(new_config.fallback)
 
     # 解析器/翻译参数在路由器装配时定格 → 重建路由器（共享统计器）
-    runtime.router = build_router(new_config, app[KEY_SYSTEMONE], app[KEY_FALLBACK], app[KEY_STATS])
+    runtime.router = build_router(new_config, app[KEY_SYSTEMONE], app[KEY_STATS])
 
     # 日志级别可热调（root systemone_bridge logger）
     if new_config.logging.level != old_config.logging.level:
@@ -219,14 +216,13 @@ async def handle_index(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(index_path, headers={"Cache-Control": "no-store"})
 
 
-# ---------- 连通性测试端点 ----------
+# ---------- 决策连通性测试端点 ----------
 
 _SectionT = TypeVar("_SectionT", bound=BaseModel)
 
 # 测试端点允许的覆盖字段（api_key 掩码/缺省时沿用当前配置）
 _TEST_OVERRIDE_FIELDS: dict[str, tuple[str, ...]] = {
     "systemone": ("base_url", "decisions_path", "api_key", "model", "timeout_seconds"),
-    "fallback": ("base_url", "api_key", "model", "timeout_seconds"),
 }
 
 
@@ -236,7 +232,7 @@ async def _resolve_test_section(
     """组装测试用配置段：默认当前配置，允许请求体按字段覆盖。非法请求返回 None。"""
 
     current = request.app[KEY_RUNTIME].config
-    base = getattr(current, "upstream_systemone" if kind == "systemone" else "fallback")
+    base = getattr(current, "upstream_systemone")
     overrides: dict[str, Any] = {}
     if request.can_read_body:
         try:
@@ -255,110 +251,40 @@ async def _resolve_test_section(
         return None
 
 
-async def probe_systemone(section: UpstreamSystemOneConfig, session: aiohttp.ClientSession) -> dict[str, Any]:
-    """真实探测 SystemOne 上游：GET {base_url}/health，返回延迟与错误分类。"""
+async def probe_systemone(
+    section: UpstreamSystemOneConfig, session: aiohttp.ClientSession
+) -> dict[str, Any]:
+    """真实探测 SystemOne 决策端点：发一次 2 选项 choice 的最小 decisions 请求。
 
-    url = section.base_url.rstrip("/") + "/health"
-    headers = {"Authorization": f"Bearer {section.api_key}"} if section.api_key else {}
-    timeout = aiohttp.ClientTimeout(total=min(float(section.timeout_seconds) or 5.0, 10.0))
-    start = time.perf_counter()
-    try:
-        async with session.get(url, headers=headers, timeout=timeout) as response:
-            latency_ms = round((time.perf_counter() - start) * 1000, 1)
-            body_text = (await response.text())[:200]
-            if response.status == 200:
-                return {"ok": True, "category": "ok", "status": 200, "latency_ms": latency_ms, "detail": body_text}
-            if response.status == 404:
-                return {
-                    "ok": False,
-                    "category": "no_health_endpoint",
-                    "status": 404,
-                    "latency_ms": latency_ms,
-                    "detail": "端点可达但无 /health（/v1/decisions 可能仍可用）",
-                }
-            category = "server_error" if response.status >= 500 else "rejected"
-            return {
-                "ok": False,
-                "category": category,
-                "status": response.status,
-                "latency_ms": latency_ms,
-                "detail": body_text,
-            }
-    except asyncio.TimeoutError:
-        return {
-            "ok": False,
-            "category": "unreachable",
-            "latency_ms": round((time.perf_counter() - start) * 1000, 1),
-            "detail": f"超时（>{timeout.total}s）",
+    消耗可忽略（单题双选项，SystemOne 单次前向毫秒级）；成功返回决策往返延迟与选择。
+    state 用与 exprsel 一致的结构化形状（OpenXLab 网关对纯字符串 state 校验不过）。
+    """
+
+    client = SystemOneClient(section, session)
+    state = {"task": "连通性测试：请从两个选项中任选其一。", "recent_chat": ["<message from=user>ping</message>"]}
+    # OpenXLab 网关要求 choice 题必带 instructions（官方开源 serving 无此硬校验）
+    questions = {
+        "ping": {
+            "type": "choice",
+            "instructions": "两个选项哪个更合适？概率越低代表越不合适。",
+            "criteria": {"a": "选项A", "b": "选项B"},
         }
-    except aiohttp.ClientError as exc:
-        return {
-            "ok": False,
-            "category": "unreachable",
-            "latency_ms": round((time.perf_counter() - start) * 1000, 1),
-            "detail": str(exc),
-        }
-
-
-async def probe_fallback(section: Any, session: aiohttp.ClientSession) -> dict[str, Any]:
-    """真实探测回退上游：发一次最小 chat completion（max_tokens=1），验证 URL/密钥/模型。"""
-
-    url = section.base_url.rstrip("/") + "/chat/completions"
-    headers = {"Content-Type": "application/json"}
-    if section.api_key:
-        headers["Authorization"] = f"Bearer {section.api_key}"
-    payload = {
-        "model": section.model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
-        "stream": False,
     }
-    timeout = aiohttp.ClientTimeout(total=min(float(section.timeout_seconds) or 15.0, 30.0))
     start = time.perf_counter()
     try:
-        async with session.post(url, json=payload, headers=headers, timeout=timeout) as response:
-            latency_ms = round((time.perf_counter() - start) * 1000, 1)
-            body_text = (await response.text())[:200]
-            if response.status == 200:
-                model = ""
-                try:
-                    model = str(json.loads(body_text).get("model") or "")
-                except json.JSONDecodeError:
-                    pass
-                return {
-                    "ok": True,
-                    "category": "ok",
-                    "status": 200,
-                    "latency_ms": latency_ms,
-                    "detail": f"模型 {model or section.model} 可用",
-                }
-            if response.status in (401, 403):
-                category = "auth_error"
-            elif response.status >= 500:
-                category = "server_error"
-            else:
-                category = "rejected"
-            return {
-                "ok": False,
-                "category": category,
-                "status": response.status,
-                "latency_ms": latency_ms,
-                "detail": body_text,
-            }
-    except asyncio.TimeoutError:
-        return {
-            "ok": False,
-            "category": "unreachable",
-            "latency_ms": round((time.perf_counter() - start) * 1000, 1),
-            "detail": f"超时（>{timeout.total}s）",
-        }
-    except aiohttp.ClientError as exc:
-        return {
-            "ok": False,
-            "category": "unreachable",
-            "latency_ms": round((time.perf_counter() - start) * 1000, 1),
-            "detail": str(exc),
-        }
+        answers = await client.decide(state, questions)
+    except SystemOneError as exc:
+        return {"ok": False, "category": exc.category, "detail": str(exc.detail or exc)}
+    latency_ms = round((time.perf_counter() - start) * 1000, 1)
+    answer = answers.get("ping") if isinstance(answers.get("ping"), dict) else {}
+    decision = str(answer.get("choice") or answer.get("decision") or "")
+    return {
+        "ok": True,
+        "category": "ok",
+        "latency_ms": latency_ms,
+        "decision": decision,
+        "detail": f"决策往返 {latency_ms}ms，选择={decision}",
+    }
 
 
 async def handle_test_systemone(request: web.Request) -> web.Response:
@@ -366,16 +292,6 @@ async def handle_test_systemone(request: web.Request) -> web.Response:
     if section is None:
         return web.json_response({"error": "测试参数非法"}, status=400)
     result = await probe_systemone(section, request.app[KEY_SESSION])
-    return web.json_response(result)
-
-
-async def handle_test_fallback(request: web.Request) -> web.Response:
-    from .config import FallbackConfig
-
-    section = await _resolve_test_section(request, "fallback", FallbackConfig)
-    if section is None:
-        return web.json_response({"error": "测试参数非法"}, status=400)
-    result = await probe_fallback(section, request.app[KEY_SESSION])
     return web.json_response(result)
 
 
@@ -387,4 +303,3 @@ def register_webui(app: web.Application) -> None:
     app.router.add_post("/api/config", handle_post_config)
     app.router.add_get("/api/status", handle_status)
     app.router.add_post("/api/test/systemone", handle_test_systemone)
-    app.router.add_post("/api/test/fallback", handle_test_fallback)

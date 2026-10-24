@@ -1,7 +1,7 @@
 [project]
 name = "systemone-bridge"
-version = "0.1.0"
-description = "Local protocol bridge: OpenAI-compatible northbound (chat completions) to Intern-Decision SystemOne /v1/decisions southbound, with safe passthrough fallback."
+version = "0.2.0"
+description = "Local protocol converter: OpenAI-compatible northbound (chat completions) to Intern-Decision SystemOne /v1/decisions southbound. Pure translation, explicit error codes, no fallback."
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]

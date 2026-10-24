@@ -9,14 +9,12 @@ import aiohttp
 from aiohttp import web
 
 from .config import BridgeConfig
-from .fallback import FallbackClient
 from .northbound import NorthboundRouter
 from .stats import BridgeStats
 from .systemone import SystemOneClient
 
 KEY_SESSION = web.AppKey("session", aiohttp.ClientSession)
 KEY_SYSTEMONE = web.AppKey("systemone", SystemOneClient)
-KEY_FALLBACK = web.AppKey("fallback", FallbackClient)
 KEY_STATS = web.AppKey("stats", BridgeStats)
 KEY_CONFIG_PATH = web.AppKey("config_path", Path)
 

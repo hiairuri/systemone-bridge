@@ -1,14 +1,12 @@
-"""aiohttp 服务：北向 /v1/chat/completions、/v1/models，南向与回退客户端装配，WebUI。"""
+"""aiohttp 服务：北向 /v1/chat/completions、/v1/models、/health（只报桥自身），WebUI。"""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 import aiohttp
 from aiohttp import web
@@ -16,7 +14,6 @@ from aiohttp import web
 from . import __version__
 from .appkeys import (
     KEY_CONFIG_PATH,
-    KEY_FALLBACK,
     KEY_RUNTIME,
     KEY_SESSION,
     KEY_STATS,
@@ -24,9 +21,8 @@ from .appkeys import (
     RuntimeState,
 )
 from .config import BridgeConfig, bootstrap_config_file, load_config
-from .fallback import FallbackError, FallbackClient
 from .logging_setup import setup_logging
-from .northbound import RoutingResult
+from .northbound import BridgeError
 from .stats import BridgeStats
 from .systemone import SystemOneClient
 from .webui import build_router, register_webui
@@ -35,6 +31,12 @@ logger = logging.getLogger("systemone_bridge.server")
 
 # 静态对外模型清单（v1：两个规格都展示，实际权重由 SystemOne 端侧决定）
 ADVERTISED_MODELS = ("intern-decision-4b", "intern-decision-0.8b")
+
+
+def _error_body(message: str, error_type: str, code: str) -> dict:
+    """OpenAI 风格错误体：{"error": {"message", "type", "code"}}。"""
+
+    return {"error": {"message": message, "type": error_type, "code": code}}
 
 
 @asynccontextmanager
@@ -47,13 +49,12 @@ async def create_app(
         app = web.Application(client_max_size=32 * 1024 * 1024)
         app[KEY_SESSION] = session
         app[KEY_SYSTEMONE] = SystemOneClient(config.upstream_systemone, session)
-        app[KEY_FALLBACK] = FallbackClient(config.fallback, session)
         app[KEY_STATS] = BridgeStats()
         if config_path is not None:
             app[KEY_CONFIG_PATH] = config_path
         # 解析器装配与 WebUI 保存后的热应用共用同一构建逻辑；
         # config/router 收进启动前注册的 RuntimeState，保存热应用只换其内部引用
-        router = build_router(config, app[KEY_SYSTEMONE], app[KEY_FALLBACK], app[KEY_STATS])
+        router = build_router(config, app[KEY_SYSTEMONE], app[KEY_STATS])
         app[KEY_RUNTIME] = RuntimeState(config=config, router=router)
 
         app.router.add_post("/v1/chat/completions", handle_chat_completions)
@@ -66,46 +67,27 @@ async def create_app(
         await session.close()
 
 
-async def handle_chat_completions(request: web.Request) -> web.StreamResponse:
+async def handle_chat_completions(request: web.Request) -> web.Response:
     try:
         body = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError):
-        return web.json_response({"error": {"message": "invalid JSON body"}}, status=400)
+        return web.json_response(
+            _error_body("invalid JSON body", "invalid_request_error", "invalid_request"),
+            status=400,
+        )
     if not isinstance(body, dict):
-        return web.json_response({"error": {"message": "body must be a JSON object"}}, status=400)
+        return web.json_response(
+            _error_body("body must be a JSON object", "invalid_request_error", "invalid_request"),
+            status=400,
+        )
     router = request.app[KEY_RUNTIME].router
     try:
-        result = await router.handle_chat_completions(body)
-    except FallbackError as exc:
-        logger.error("回退上游失败：%s", exc)
+        payload = await router.handle_chat_completions(body)
+    except BridgeError as exc:
         return web.json_response(
-            {"error": {"message": f"fallback upstream failed: {exc}"}}, status=502
+            _error_body(exc.message, exc.error_type, exc.code), status=exc.status
         )
-    return await _render(request, result)
-
-
-async def _render(request: web.Request, result: RoutingResult) -> web.StreamResponse:
-    if result.payload is not None:
-        return web.json_response(result.payload)
-    response = web.StreamResponse(
-        status=200,
-        headers={
-            "Content-Type": "text/event-stream; charset=utf-8",
-            "Cache-Control": "no-store",
-        },
-    )
-    await response.prepare(request)
-    try:
-        async for chunk in result.stream:
-            await response.write(chunk)
-        await response.write_eof()
-    except (ConnectionResetError, FallbackError) as exc:
-        if isinstance(exc, FallbackError):
-            logger.error("流式回退中断：%s", exc)
-            # 响应头已发出，无法再改状态码；尽力截断流
-            with contextlib.suppress(Exception):
-                await response.write_eof()
-    return response
+    return web.json_response(payload)
 
 
 async def handle_models(request: web.Request) -> web.Response:
@@ -117,13 +99,16 @@ async def handle_models(request: web.Request) -> web.Response:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    systemone: SystemOneClient = request.app[KEY_SYSTEMONE]
-    upstream = await systemone.health()
+    """桥自身健康状态：version / uptime / 已启用解析器清单；不探测上游。"""
+
+    stats: BridgeStats = request.app[KEY_STATS]
+    runtime = request.app[KEY_RUNTIME]
     return web.json_response(
         {
             "status": "ok",
             "version": __version__,
-            "systemone_upstream": upstream or {"reachable": False},
+            "uptime_seconds": round(stats.uptime_seconds, 1),
+            "parsers": runtime.router.parser_names,
         }
     )
 

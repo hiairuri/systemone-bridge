@@ -7,7 +7,7 @@ host = "127.0.0.1"
 port = 18500
 
 # 南向 SystemOne（Intern-Decision 决策端点）上游。
-# 端点当前可以不存在：解析成功但 SystemOne 不可达/超时/报错时自动直通回退。
+# 纯协议转换器：决策失败时北向返回 502 upstream_error，回退由调用方负责。
 [upstream_systemone]
 # 决策端点的服务根（桥会在其下拼 decisions_path）
 base_url = "http://127.0.0.1:8100"
@@ -21,15 +21,7 @@ model = ""
 # 一次决策调用的超时秒数（SystemOne 单次前向毫秒级，10s 已极宽裕）
 timeout_seconds = 10.0
 
-# 回退上游：任何情况下桥的行为不能比"直接打这个上游"更差。
-[fallback]
-base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
-api_key = ""
-# 当北向请求未带 model 或 model 指向 intern-decision-* 但被迫回退时，改写为该模型
-model = "GLM-5.3-Flash"
-timeout_seconds = 120.0
-
-# 任务解析器开关：关闭后对应任务直接走直通回退
+# 任务解析器开关：关闭后对应任务不识别，北向返回 422 unknown_template
 [task_parsers]
 # MaiBot 表达方式选择（expression_selector）快照模板
 expression_selector = true

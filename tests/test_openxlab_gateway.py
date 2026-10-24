@@ -11,12 +11,7 @@ from typing import Any
 
 from aiohttp import ClientSession, web
 
-from conftest import (
-    create_mock_fallback_app,
-    exprsel_request,
-    make_stack_config,
-    spawn,
-)
+from conftest import exprsel_request, make_stack_config, spawn
 from mock_systemone import create_mock_systemone_app, default_handler
 from systemone_bridge.config import UpstreamSystemOneConfig
 from systemone_bridge.server import create_app
@@ -87,7 +82,7 @@ async def test_openxlab_shape_path_and_model_injection() -> None:
 
 
 async def test_openxlab_gateway_end_to_end(tmp_path, http_client: ClientSession) -> None:
-    """三件套全链路：exprsel 北向请求 → 桥 → mock /v1/systemone（带 model）→ 合法回包。"""
+    """双件套全链路：exprsel 北向请求 → 桥 → mock /v1/systemone（带 model）→ 合法回包。"""
 
     received: list[dict[str, Any]] = []
 
@@ -96,11 +91,8 @@ async def test_openxlab_gateway_end_to_end(tmp_path, http_client: ClientSession)
         return default_handler(request)
 
     systemone_url, runner_so = await spawn(create_mock_systemone_app(capture))
-    fallback_calls: list[dict[str, Any]] = []
-    fallback_url, runner_fb = await spawn(create_mock_fallback_app(fallback_calls))
     config = make_stack_config(
         systemone_url,
-        fallback_url + "/v1",
         upstream_systemone={
             "base_url": systemone_url,
             "decisions_path": "/v1/systemone",
@@ -121,7 +113,6 @@ async def test_openxlab_gateway_end_to_end(tmp_path, http_client: ClientSession)
             await runner_bridge.cleanup()
     finally:
         await runner_so.cleanup()
-        await runner_fb.cleanup()
 
     # 南向请求命中网关别名路径，且顶层带 model 字段
     assert len(received) == 1
@@ -133,5 +124,3 @@ async def test_openxlab_gateway_end_to_end(tmp_path, http_client: ClientSession)
     content = json.loads(data["choices"][0]["message"]["content"])
     assert set(content.keys()) == {"selected_ids"}
     assert isinstance(content["selected_ids"], list) and content["selected_ids"]
-    # 回退上游未被触碰
-    assert fallback_calls == []

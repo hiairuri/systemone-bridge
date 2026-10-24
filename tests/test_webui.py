@@ -1,4 +1,4 @@
-"""WebUI 测试：配置脱敏、掩码占位保留旧密钥、校验失败不落盘、保存热生效、连通性测试端点、运行状态。"""
+"""WebUI 测试：配置脱敏、掩码占位保留旧密钥、校验失败不落盘、保存热生效、决策测试端点、运行状态。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any, AsyncIterator
 import pytest
 from aiohttp import ClientSession
 
-from conftest import create_mock_fallback_app, exprsel_request, make_stack_config, spawn
+from conftest import exprsel_request, make_stack_config, spawn
 from mock_systemone import create_mock_systemone_app
 from systemone_bridge.config import BridgeConfig, bootstrap_config_file, dump_config_toml, load_config
 from systemone_bridge.server import create_app
@@ -24,7 +24,7 @@ MASKED_KEY = SECRET_KEY[:4] + "***"
 class WebuiStack:
     bridge_url: str
     config_path: Path
-    fallback_calls: list[dict[str, Any]] = field(default_factory=list)
+    systemone_received: list[dict[str, Any]] = field(default_factory=list)
     _runners: list[Any] = field(default_factory=list)
 
     async def aclose(self) -> None:
@@ -34,17 +34,23 @@ class WebuiStack:
 
 @pytest.fixture
 async def webui_stack(tmp_path: Path, http_client: ClientSession) -> AsyncIterator[WebuiStack]:
-    calls: list[dict[str, Any]] = []
-    fallback_url, runner1 = await spawn(create_mock_fallback_app(calls))
-    systemone_url, runner2 = await spawn(create_mock_systemone_app())
-    config = make_stack_config(systemone_url, fallback_url + "/v1")
-    config.fallback.api_key = SECRET_KEY
+    received: list[dict[str, Any]] = []
+
+    def capture(request: dict[str, Any]) -> dict[str, Any]:
+        received.append(request)
+        from mock_systemone import default_handler
+
+        return default_handler(request)
+
+    systemone_url, runner1 = await spawn(create_mock_systemone_app(capture))
+    config = make_stack_config(systemone_url)
+    config.upstream_systemone.api_key = SECRET_KEY
     config_path = tmp_path / "config.toml"
     async with create_app(config, tmp_path, config_path) as bridge_app:
-        bridge_url, runner3 = await spawn(bridge_app)
+        bridge_url, runner2 = await spawn(bridge_app)
         stack = WebuiStack(
             bridge_url=bridge_url, config_path=config_path,
-            fallback_calls=calls, _runners=[runner1, runner2, runner3],
+            systemone_received=received, _runners=[runner1, runner2],
         )
         try:
             yield stack
@@ -73,6 +79,7 @@ async def test_index_page_served(webui_stack: WebuiStack, http_client: ClientSes
         text = await response.text()
     assert "systemone-bridge" in text
     assert "保存配置" in text  # 中文单页：卡片 + 保存栏
+    assert "回退上游" not in text  # 回退卡片已随纯化删除
 
 
 async def test_get_config_masks_api_key(webui_stack: WebuiStack, http_client: ClientSession) -> None:
@@ -81,8 +88,8 @@ async def test_get_config_masks_api_key(webui_stack: WebuiStack, http_client: Cl
         data = await response.json(content_type=None)
     # 完整密钥绝不出现，掩码为「前 4 字符 + ***」
     assert SECRET_KEY not in raw
-    assert data["fallback"]["api_key"] == MASKED_KEY
-    assert data["upstream_systemone"]["api_key"] == ""  # 空密钥保持空
+    assert data["upstream_systemone"]["api_key"] == MASKED_KEY
+    assert "fallback" not in data  # 配置模型不再有 fallback 节
 
 
 def test_dump_config_toml_roundtrip(tmp_path: Path) -> None:
@@ -92,6 +99,7 @@ def test_dump_config_toml_roundtrip(tmp_path: Path) -> None:
     config_path = tmp_path / "config.toml"
     config_path.write_text(dump_config_toml(config), encoding="utf-8")
     assert load_config(config_path).model_dump() == config.model_dump()
+    assert "fallback" not in dump_config_toml(config)
 
 
 # ---------- 保存：掩码保留 / 校验不落盘 ----------
@@ -101,9 +109,9 @@ async def test_post_mask_placeholder_preserves_old_key(
     webui_stack: WebuiStack, http_client: ClientSession
 ) -> None:
     config = await get_config(http_client, webui_stack.bridge_url)
-    fallback = dict(config["fallback"])
-    fallback["model"] = "MASKED-SAVE-MODEL"  # api_key 仍是 GET 回来的掩码占位
-    status, data = await post_config(http_client, webui_stack.bridge_url, {"fallback": fallback})
+    upstream = dict(config["upstream_systemone"])
+    upstream["model"] = "MASKED-SAVE-MODEL"  # api_key 仍是 GET 回来的掩码占位
+    status, data = await post_config(http_client, webui_stack.bridge_url, {"upstream_systemone": upstream})
     assert status == 200 and data["ok"] is True
     # 落盘文件里旧密钥原样保留、新 model 生效
     saved = webui_stack.config_path.read_text(encoding="utf-8")
@@ -118,16 +126,16 @@ async def test_post_validation_failure_does_not_write(
     base = webui_stack.bridge_url
     # 先正常保存一次，让 config.toml 存在且含真实密钥
     config = await get_config(http_client, base)
-    fallback = dict(config["fallback"])
-    fallback["model"] = "GOOD-MODEL"
-    status, _ = await post_config(http_client, base, {"fallback": fallback})
+    upstream = dict(config["upstream_systemone"])
+    upstream["model"] = "GOOD-MODEL"
+    status, _ = await post_config(http_client, base, {"upstream_systemone": upstream})
     assert status == 200
     before = webui_stack.config_path.read_text(encoding="utf-8")
 
     # 非法提交：超时非数字 → 校验失败 → 400，磁盘不动
-    bad = dict(config["fallback"])
+    bad = dict(config["upstream_systemone"])
     bad["timeout_seconds"] = "not-a-number"
-    status, data = await post_config(http_client, base, {"fallback": bad})
+    status, data = await post_config(http_client, base, {"upstream_systemone": bad})
     assert status == 400
     assert data["error"] == "配置校验失败，未保存"
     # 校验错误瘦身：不回显提交的密钥
@@ -135,36 +143,34 @@ async def test_post_validation_failure_does_not_write(
     assert webui_stack.config_path.read_text(encoding="utf-8") == before
     # 配置在内存中也不被污染
     after = await get_config(http_client, base)
-    assert after["fallback"]["model"] == "GOOD-MODEL"
-    assert after["fallback"]["api_key"] == MASKED_KEY
+    assert after["upstream_systemone"]["model"] == "GOOD-MODEL"
+    assert after["upstream_systemone"]["api_key"] == MASKED_KEY
 
 
 # ---------- 保存热生效（保存后路由即时变化，不重启） ----------
 
 
-async def test_save_hot_applies_model_to_routing(
+async def test_save_hot_applies_upstream_model_injection(
     webui_stack: WebuiStack, http_client: ClientSession
 ) -> None:
     base = webui_stack.bridge_url
-    # intern-decision-* 模型 + 无解析器识别 → 直通回退且模型名改写为 fallback.model
-    body = {"model": "intern-decision-4b", "messages": [{"role": "user", "content": "你好"}]}
-
-    # 保存前：直通回退用旧配置里的回退模型
+    # 保存前：南向请求体不含 model（测试栈配置 model 为空）
+    body = exprsel_request("exprsel_group_a.json")
     async with http_client.post(base + "/v1/chat/completions", json=body) as response:
         assert response.status == 200
-    assert webui_stack.fallback_calls[-1]["model"] == "GLM-TEST"
+    assert "model" not in webui_stack.systemone_received[-1]
 
     # 保存新 model（api_key 用掩码占位）
     config = await get_config(http_client, base)
-    fallback = dict(config["fallback"])
-    fallback["model"] = "HOT-RELOADED"
-    status, _ = await post_config(http_client, base, {"fallback": fallback})
+    upstream = dict(config["upstream_systemone"])
+    upstream["model"] = "HOT-INJECTED"
+    status, _ = await post_config(http_client, base, {"upstream_systemone": upstream})
     assert status == 200
 
-    # 保存后：无需重启，后续请求立即用新 model
+    # 保存后：无需重启，后续南向请求立即注入新 model
     async with http_client.post(base + "/v1/chat/completions", json=body) as response:
         assert response.status == 200
-    assert webui_stack.fallback_calls[-1]["model"] == "HOT-RELOADED"
+    assert webui_stack.systemone_received[-1]["model"] == "HOT-INJECTED"
 
 
 async def test_save_hot_disables_parser(
@@ -184,18 +190,20 @@ async def test_save_hot_disables_parser(
     status, _ = await post_config(http_client, base, {"task_parsers": parsers})
     assert status == 200
 
-    # 保存后：同样的请求不再识别，直接直通回退（SystemOne 零调用）
+    # 保存后：同样的请求不再识别 → 422 unknown_template（SystemOne 零调用）
     config = await get_config(http_client, base)
     assert config["task_parsers"]["expression_selector"] is False
+    before_calls = len(webui_stack.systemone_received)
     async with http_client.post(
         base + "/v1/chat/completions", json=exprsel_request("exprsel_group_a.json")
     ) as response:
-        assert response.status == 200
+        assert response.status == 422
         data = await response.json()
-    assert data["choices"][0]["message"]["content"] == "fallback-ok"
+    assert data["error"]["code"] == "unknown_template"
+    assert len(webui_stack.systemone_received) == before_calls
 
 
-# ---------- 连通性测试端点（打真实 mock 上游） ----------
+# ---------- 决策连通性测试端点（打真实 mock 上游 decisions） ----------
 
 
 async def test_test_endpoint_systemone_ok(
@@ -206,20 +214,10 @@ async def test_test_endpoint_systemone_ok(
         data = await response.json()
     assert data["ok"] is True
     assert data["category"] == "ok"
-    assert data["status"] == 200
-
-
-async def test_test_endpoint_fallback_ok(
-    webui_stack: WebuiStack, http_client: ClientSession
-) -> None:
-    async with http_client.post(webui_stack.bridge_url + "/api/test/fallback") as response:
-        assert response.status == 200
-        data = await response.json()
-    assert data["ok"] is True
-    assert data["category"] == "ok"
-    assert "可用" in data["detail"]
-    # 测试探测只发 max_tokens=1 的最小请求
-    assert webui_stack.fallback_calls[-1]["messages"] == [{"role": "user", "content": "ping"}]
+    assert data["decision"] in {"a", "b"}
+    assert data["latency_ms"] >= 0
+    assert "决策往返" in data["detail"]
+    assert "选择=" in data["detail"]
 
 
 async def test_test_endpoint_override_unreachable(
@@ -239,29 +237,27 @@ async def test_test_endpoint_override_unreachable(
 # ---------- 运行状态（northbound 打点接入） ----------
 
 
-async def test_status_counts_routes_and_errors(
+async def test_status_counts_successes_and_failures(
     webui_stack: WebuiStack, http_client: ClientSession
 ) -> None:
     base = webui_stack.bridge_url
+    # 一次成功决策：计入 successes.systemone.expression_selector
     async with http_client.post(
-        base + "/v1/chat/completions",
-        json={"model": "GLM-PLAIN", "messages": [{"role": "user", "content": "hi"}]},
+        base + "/v1/chat/completions", json=exprsel_request("exprsel_group_a.json")
     ) as response:
         assert response.status == 200
-    # 锚点命中但候选为空 → 解析失败直通，同时进最近错误
+    # 一次失败：锚点命中但候选为空 → 422 bad_template
     body = exprsel_request("exprsel_group_a.json")
     body["messages"][0]["content"] = "请从下面候选中选择。候选表达方式：\n（本次为空）"
     async with http_client.post(base + "/v1/chat/completions", json=body) as response:
-        assert response.status == 200
+        assert response.status == 422
     async with http_client.get(base + "/api/status") as response:
         assert response.status == 200
         data = await response.json()
     assert data["total_requests"] == 2
-    assert data["fallback_hits"] == 2
-    assert data["systemone_hits"] == 0
-    assert data["routes"].get("passthrough.direct") == 1
-    assert data["routes"].get("passthrough.parse_error") == 1
-    assert data["recent_errors"] and data["recent_errors"][-1]["kind"] == "parse_error"
+    assert data["successes"].get("systemone.expression_selector") == 1
+    assert data["failures"].get("bad_template") == 1
+    assert data["recent_errors"] and data["recent_errors"][-1]["code"] == "bad_template"
     assert data["version"]
     assert data["server"]
 

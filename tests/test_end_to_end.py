@@ -55,8 +55,6 @@ async def test_exprsel_end_to_end(stack: Stack, http_client: ClientSession) -> N
     assert _count_candidates(system_text) == len(
         stack.systemone_received[0]["questions"]["selection"]["criteria"]
     )
-    # 回退上游未被触碰
-    assert stack.fallback_calls == []
 
 
 async def test_df_end_to_end(stack: Stack, http_client: ClientSession) -> None:
@@ -94,7 +92,9 @@ async def test_df_partial_needs_check_end_to_end(
 ) -> None:
     """p0 要检定、p1 不要：单个 mock handler 里按字段名分流。"""
 
-    from mock_systemone import _choice_answer, _noul_answer
+    from mock_systemone import _choice_answer, _noul_answer, create_mock_systemone_app, spawn
+    from conftest import make_stack_config
+    from systemone_bridge.server import create_app
 
     def handler(request: dict[str, Any]) -> dict[str, Any]:
         answers: dict[str, Any] = {}
@@ -112,21 +112,15 @@ async def test_df_partial_needs_check_end_to_end(
                 answers[field_name] = _choice_answer("choice", options, options[0])
         return answers
 
-    # 为本用例换一个带 handler 的 SystemOne：重建三件套
-    from conftest import create_mock_fallback_app, make_stack_config, spawn
-    from mock_systemone import create_mock_systemone_app
-    from systemone_bridge.server import create_app
-
+    # 为本用例换一个带 handler 的 SystemOne：重建双件套
     received: list[dict] = []
-    calls: list[dict] = []
 
     def capture(request: dict[str, Any]) -> dict[str, Any]:
         received.append(request)
         return handler(request)
 
     systemone_url, runner_so = await spawn(create_mock_systemone_app(capture))
-    fallback_url, runner_fb = await spawn(create_mock_fallback_app(calls))
-    config = make_stack_config(systemone_url, fallback_url + "/v1")
+    config = make_stack_config(systemone_url)
     try:
         async with create_app(config, tmp_path) as bridge_app:
             bridge_url, runner_bridge = await spawn(bridge_app)
@@ -143,4 +137,3 @@ async def test_df_partial_needs_check_end_to_end(
             await runner_bridge.cleanup()
     finally:
         await runner_so.cleanup()
-        await runner_fb.cleanup()

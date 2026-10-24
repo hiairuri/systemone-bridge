@@ -9,7 +9,7 @@
 映射（本项目设计决策，题量预算 ≤16）：
 - 每位玩家 3 题：needs_check(noul)、stat(choice：d100=技能+属性，d20=属性)、kind(choice)；
 - d20 额外 1 题：dc(score，criteria 用 {DC值: 档位名} 保证期望分即真实 DC)；
-- d20 每玩家 4 题 → 最多 4 人；d100 每玩家 3 题 → 最多 5 人；超限 ParseError → 直通回退。
+- d20 每玩家 4 题 → 最多 4 人；d100 每玩家 3 题 → 最多 5 人；超限 ParseError → 422 bad_template。
 - advantage/modifier/economy_actions/overreach/world_requirements v1 不决策：
   前两者按模板默认（normal/0），后三者 DF 侧独立容错解析、缺失不影响 checks。
 """

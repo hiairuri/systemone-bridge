@@ -1,9 +1,9 @@
 """南向 SystemOne（Intern-Decision 决策端点，路径可配置）客户端。
 
-错误分类（调用方统一按「直通回退」处理）：
+失败统一抛 SystemOneError，分类（进入错误 message，北向统一映射为 502 upstream_error）：
 - unreachable：连接失败/超时/DNS 失败；
 - server_error：5xx（含官方 503 not ready）；
-- rejected：4xx——请求被端点拒绝（含 422 校验失败），翻译产物可能不合法，同样回退；
+- rejected：4xx——请求被端点拒绝（含 422 校验失败）；
 - bad_response：2xx 但响应体不符合 Jev 包络。
 
 协议依据：specs/systemone-protocol.md。
@@ -48,22 +48,6 @@ class SystemOneClient:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
-
-    async def health(self) -> dict[str, Any] | None:
-        """探测 /health（可选诊断用）；失败返回 None，不抛错。"""
-
-        try:
-            url = self._config.base_url.rstrip("/") + "/health"
-            async with self._session.get(
-                url, headers=self._headers(),
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as response:
-                if response.status != 200:
-                    return None
-                data = await response.json(content_type=None)
-                return data if isinstance(data, dict) else None
-        except (aiohttp.ClientError, asyncio.TimeoutError):
-            return None
 
     async def decide(
         self,

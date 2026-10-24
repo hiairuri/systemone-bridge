@@ -35,7 +35,7 @@ class ExpressionSelectorParser:
         self.max_selected = max_selected
 
     def detect(self, request: NorthboundRequest) -> bool:
-        # 保守识别：只认模板锚点；误识别会在 parse 阶段失败并直通回退，无风险
+        # 保守识别：只认模板锚点；误识别会在 parse 阶段失败并返回 422 bad_template，无风险
         return _SYSTEM_ANCHOR in request.system_text
 
     def parse(self, request: NorthboundRequest) -> ParsedTask:

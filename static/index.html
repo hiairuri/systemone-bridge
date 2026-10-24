@@ -109,7 +109,7 @@
   <!-- SystemOne 上游 -->
   <section class="card">
     <h2><span class="dot"></span>SystemOne 上游</h2>
-    <p class="desc">Intern-Decision 结构化决策服务（桥拼 decisions_path）。不可达 / 超时 / 报错时自动直通回退。</p>
+    <p class="desc">Intern-Decision 结构化决策服务（桥拼 decisions_path）。纯协议转换：决策失败时北向返回 502 upstream_error，回退由调用方负责。</p>
     <div class="grid">
       <div class="field-wide"><label>服务地址 base_url</label><input type="text" id="sm-base" data-section="upstream_systemone" data-key="base_url"></div>
       <div><label>API Key（留空则不发 Authorization）</label><input type="password" id="sm-key" data-section="upstream_systemone" data-key="api_key" autocomplete="off"></div>
@@ -118,31 +118,15 @@
       <div><label>决策超时（秒）</label><input type="number" id="sm-timeout" step="0.5" min="1" data-section="upstream_systemone" data-key="timeout_seconds"></div>
     </div>
     <div class="test-row">
-      <button class="btn-secondary" id="btn-test-sm">测试连通</button>
+      <button class="btn-secondary" id="btn-test-sm">测试决策</button>
       <div class="result" id="result-sm"></div>
-    </div>
-  </section>
-
-  <!-- 回退上游 -->
-  <section class="card">
-    <h2><span class="dot"></span>回退上游</h2>
-    <p class="desc">OpenAI 兼容常规 LLM（默认 GLM）。任何回退都直通它——桥不比直接打这个上游更差。</p>
-    <div class="grid">
-      <div class="field-wide"><label>服务地址 base_url</label><input type="text" id="fb-base" data-section="fallback" data-key="base_url"></div>
-      <div><label>API Key</label><input type="password" id="fb-key" data-section="fallback" data-key="api_key" autocomplete="off"></div>
-      <div><label>模型 model</label><input type="text" id="fb-model" data-section="fallback" data-key="model"></div>
-      <div><label>超时（秒）</label><input type="number" id="fb-timeout" step="1" min="1" data-section="fallback" data-key="timeout_seconds"></div>
-    </div>
-    <div class="test-row">
-      <button class="btn-secondary" id="btn-test-fb">测试连通</button>
-      <div class="result" id="result-fb"></div>
     </div>
   </section>
 
   <!-- 解析器 -->
   <section class="card">
     <h2><span class="dot"></span>解析器</h2>
-    <p class="desc">关闭后对应任务不识别、直接走直通回退；改动态参数对后续请求立即生效。</p>
+    <p class="desc">关闭后对应任务不识别，请求返回 422 unknown_template；改动态参数对后续请求立即生效。</p>
     <div class="toggle-row">
       <input type="checkbox" id="parser-exprsel" data-section="task_parsers" data-key="expression_selector">
       <div><div class="t-label">表达方式选择（MaiBot exprsel）</div>
@@ -175,11 +159,11 @@
   <!-- 运行状态 -->
   <section class="card">
     <h2><span class="dot"></span>运行状态 <span class="footnote" style="margin:0">每 5 秒自动刷新</span></h2>
-    <p class="desc">自启动以来的累计统计；systemone.* 为翻译路径命中，passthrough.* 为回退。</p>
+    <p class="desc">自启动以来的累计统计；决策成功按解析器分、失败按错误码分。</p>
     <div class="stats-grid">
       <div class="stat-box"><div class="num" id="st-total">-</div><div class="cap">总请求数</div></div>
-      <div class="stat-box"><div class="num" id="st-sys">-</div><div class="cap">SystemOne 命中</div></div>
-      <div class="stat-box"><div class="num" id="st-fb">-</div><div class="cap">直通回退</div></div>
+      <div class="stat-box"><div class="num" id="st-ok">-</div><div class="cap">决策成功</div></div>
+      <div class="stat-box"><div class="num" id="st-fail">-</div><div class="cap">决策失败</div></div>
       <div class="stat-box"><div class="num" id="st-err">-</div><div class="cap">最近错误</div></div>
     </div>
     <div class="routes" id="st-routes"></div>
@@ -279,29 +263,32 @@ function testOverrides(section, fields) {
   return overrides;
 }
 
-async function testUpstream(url, buttonId, resultId, section, fields) {
-  const box = $(resultId);
+async function testSystemone() {
+  const box = $("result-sm");
   box.className = "result";
   box.style.display = "block";
   box.textContent = "测试中…";
-  $(buttonId).disabled = true;
+  $("btn-test-sm").disabled = true;
   try {
-    const response = await fetch(url, {
+    const response = await fetch("/api/test/systemone", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(testOverrides(section, fields)),
+      body: JSON.stringify(testOverrides("upstream_systemone", ["sm-base", "sm-key", "sm-path", "sm-model", "sm-timeout"])),
     });
     const data = await response.json();
     if (data.error) { box.className = "result bad"; box.textContent = "失败：" + data.error; return; }
-    const flag = data.ok ? "✓" : "✗";
-    const latency = data.latency_ms != null ? `，${data.latency_ms}ms` : "";
-    box.className = "result " + (data.ok ? "ok" : "bad");
-    box.textContent = `${flag} ${data.detail || data.category}${latency}`;
+    if (data.ok) {
+      box.className = "result ok";
+      box.textContent = `✓ 决策往返 ${data.latency_ms}ms，选择=${data.decision}`;
+    } else {
+      box.className = "result bad";
+      box.textContent = `✗ ${data.category}：${data.detail}`;
+    }
   } catch (err) {
     box.className = "result bad";
     box.textContent = "失败：" + err;
   } finally {
-    $(buttonId).disabled = false;
+    $("btn-test-sm").disabled = false;
   }
 }
 
@@ -320,17 +307,20 @@ async function refreshStatus() {
     $("server-addr").textContent = data.server || "-";
     $("uptime").textContent = fmtUptime(data.uptime_seconds || 0);
     $("st-total").textContent = data.total_requests ?? 0;
-    $("st-sys").textContent = data.systemone_hits ?? 0;
-    $("st-fb").textContent = data.fallback_hits ?? 0;
+    const successes = data.successes || {};
+    const failures = data.failures || {};
+    const okCount = Object.values(successes).reduce((sum, n) => sum + n, 0);
+    const failCount = Object.values(failures).reduce((sum, n) => sum + n, 0);
+    $("st-ok").textContent = okCount;
+    $("st-fail").textContent = failCount;
     const errors = data.recent_errors || [];
     $("st-err").textContent = errors.length;
-    const routes = data.routes || {};
-    $("st-routes").innerHTML = Object.keys(routes).length
-      ? Object.entries(routes).map(([via, count]) => `<code>${via}</code>× ${count}`).join("　")
-      : "暂无请求";
+    const parts = Object.entries(successes).map(([via, count]) => `<code>${via}</code>× ${count}`);
+    parts.push(...Object.entries(failures).map(([code, count]) => `<code>${code}</code>× ${count}`));
+    $("st-routes").innerHTML = parts.length ? parts.join("　") : "暂无请求";
     $("st-errors").innerHTML = errors.length
       ? errors.slice().reverse().map((e) =>
-          `<li><span class="time">${e.time}</span>[${e.via}] ${e.kind}：${e.detail}</li>`).join("")
+          `<li><span class="time">${e.time}</span>[${e.code}] ${e.detail}</li>`).join("")
       : '<li class="none">暂无错误</li>';
   } catch (err) { /* 状态刷新失败不打断页面 */ }
 }
@@ -338,12 +328,7 @@ async function refreshStatus() {
 // ---------- 事件绑定 ----------
 
 $("btn-save").addEventListener("click", saveConfig);
-$("btn-test-sm").addEventListener("click", () => testUpstream(
-  "/api/test/systemone", "btn-test-sm", "result-sm", "upstream_systemone",
-  ["sm-base", "sm-key", "sm-timeout"]));
-$("btn-test-fb").addEventListener("click", () => testUpstream(
-  "/api/test/fallback", "btn-test-fb", "result-fb", "fallback",
-  ["fb-base", "fb-key", "fb-model", "fb-timeout"]));
+$("btn-test-sm").addEventListener("click", testSystemone);
 
 loadConfig().catch((err) => showMsg("配置加载失败：" + err, "bad"));
 refreshStatus();
