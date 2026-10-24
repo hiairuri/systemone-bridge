@@ -48,7 +48,7 @@ official Intern-Decision sources) lives in
 ## 它是什么
 
 ```
-MaiBot 表达选择 ─┐
+MaiBot 决策任务 ─┐
                  ├─ 北向 OpenAI /v1/chat/completions ──► systemone-bridge :18500
 DiceFrame 检定 ──┘                                          │
                               模板锚点可识别且可解析？
@@ -62,7 +62,7 @@ DiceFrame 检定 ──┘                                          │
 
 - **纯转换，无回退**：模型名不参与路由（任意模型名一律尝试解析器）；解析失败、
   SystemOne 失败等都返回明确错误码，绝不代理给其他 LLM。
-- **任务解析器**（v1 两个）：
+- **任务解析器**（v1 五个）：
   - `expression_selector`：MaiBot 表达方式选择。识别 system 消息中的「候选表达方式：」清单
     （`id: 情景=… | 风格=…`），候选 → 单题 choice（实测候选 5–50 条，≤62 选项硬限制），
     聊天上下文 → state；SystemOne 概率分布取 top-K（默认 ≤5、p ≥ 0.05）回填
@@ -71,6 +71,15 @@ DiceFrame 检定 ──┘                                          │
     user 消息（planner 上下文 JSON）→ 逐玩家 noul/choice/score 题（d20 每人 4 题、d100 每人
     3 题，≤16 题预算内）；答案合成合法的 `dice_checks` tool_calls
     （d20 带 target=期望 DC 并夹到 max_check_dc，d100 技能优先映射 skill/attribute）。
+  - `expression_check`：MaiBot 表达方式入库前审核（expression.check）。识别
+    「请评估以下表达方式或语言风格」模板，situation/style 字段行 → 结构化 state +
+    单题 noul；P(适合) ≥ 0.5 回填 `{"suitable":bool,"reason":"…"}`。
+  - `jargon_compare`：MaiBot 黑话推断比对（jargon.inference 第三相）。识别
+    「请比较这两个推断结果」模板，两段推断原文（可解析时转对象）→ state + 单题 noul；
+    P(相似) ≥ 0.5 回填 `{"is_similar":bool,"reason":"…"}`。
+  - `emoji_replace`：MaiBot 表情包替换决策。识别「需要决定是否取消注册一个旧表情包」模板，
+    候选条目块（编号/描述/使用次数/添加时间）+ keep → 单题 choice（≤21 选项）；按概率
+    argmax 合成调用方期望的自由文本 `取消注册编号X` / `不取消注册`（emoji_manager 正则直接可解析）。
 
 ## 错误码表
 
@@ -115,7 +124,7 @@ cd systemone-bridge                     # 仓库根目录
 | | `api_key` | 留空不发 Authorization；官方开源 serving 无鉴权，托管网关填 Bearer key |
 | | `model` | 注入请求体顶层 model 字段（OpenXLab 网关校验必需，如 `intern-decision-4b`）；留空不注入保持官方兼容 |
 | | `timeout_seconds` | 单次决策超时，默认 10 |
-| `[task_parsers]` | `expression_selector` / `df_check_planner` | 解析器开关，关了对应任务返回 422 unknown_template |
+| `[task_parsers]` | `expression_selector` / `df_check_planner` / `expression_check` / `jargon_compare` / `emoji_replace` | 解析器开关，关了对应任务返回 422 unknown_template |
 | `[translation]` | `expression_min_probability` / `expression_max_selected` | 概率→selected_ids 的入选阈值与条数上限 |
 | `[logging]` | `level` / `dir` | 日志级别与目录 |
 
@@ -128,7 +137,7 @@ cd systemone-bridge                     # 仓库根目录
 | 卡片 | 字段 / 内容 |
 |---|---|
 | SystemOne 上游 | `base_url` / `api_key`（留空不发 Authorization）/ `decisions_path` / `model` / 决策超时；「测试决策」按钮发一次 2 选项 choice 的最小真实 decisions 探测（消耗可忽略），显示「决策往返 Xms，选择=xx」或具体错误 |
-| 解析器 | exprsel / DF 检定开关（关了返回 422 unknown_template）；exprsel 最低入选概率与最多入选条数 |
+| 解析器 | exprsel / DF 检定 / 表达审核 / 黑话比对 / 表情包替换开关（关了返回 422 unknown_template）；exprsel 最低入选概率与最多入选条数 |
 | 服务与日志 | host / port / 日志级别 / 日志目录（改 host、port、日志目录需重启；其余保存即生效） |
 | 运行状态 | 总请求数、决策成功（按解析器分）、决策失败（按错误码分）、最近错误（每 5 秒自动刷新） |
 
@@ -157,6 +166,39 @@ cd systemone-bridge                     # 仓库根目录
    已有优雅兜底，回退由其自行完成——桥不做任何代理。
 4. 想让某类请求明确不走翻译路径：关掉对应 `task_parsers` 开关（该类请求即返回 422）。
 
+### 五个可接管任务与混合槽位配置
+
+桥已接管 5 类 MaiBot 决策型负载；每类的锚点、判定形状与回填格式：
+
+| 解析器 | 锚点（模板唯一句） | 形状 | 回填输出 |
+|---|---|---|---|
+| `expression_selector` | 候选表达方式： | choice ≤62 | `{"selected_ids":[…]}` |
+| `expression_check` | 请评估以下表达方式或语言风格 | noul | `{"suitable":bool,"reason":"…"}` |
+| `jargon_compare` | 请比较这两个推断结果 | noul | `{"is_similar":bool,"reason":"…"}` |
+| `emoji_replace` | 需要决定是否取消注册一个旧表情包 | choice ≤21 | 自由文本 `取消注册编号X` / `不取消注册` |
+| `df_check_planner` | 回合检定规划器（+dice_checks 工具） | noul/choice/score | `dice_checks` tool_calls |
+
+**判定型任务与生成型任务共用槽位时，用混合 model_list 依赖 422 切换语义**：桥对无锚点
+请求返回 422 unknown_template，MaiBot（utils_model.py）把它当不可重试错误 → 自动切到
+model_list 的下一个模型。因此推荐：
+
+```toml
+# model_config.toml —— learner 槽（1 判定 + 3 生成混合）：
+# expression.check 命中桥解析器走决策；expression.learner / jargon.learner /
+# jargon.inference 前两相（生成型）422 后自动落 GLM。
+[llm.task_config.learner]
+model_list = ["systemone-exprsel", "GLM-5.3-Flash"]
+
+# emoji 槽（替换决策 + send_emoji 带图选择子代理混合）：
+# 替换决策命中桥；带图选择子代理（25 选 1）无锚点 422 后落 GLM（visual=true 兜底）。
+# 不可只配 [systemone-exprsel] 单模型——选择子代理会硬失败。
+[llm.task_config.emoji]
+model_list = ["systemone-exprsel", "GLM-5.3-Flash"]
+```
+
+其中 `systemone-exprsel` 是 MaiBot 侧指向桥的 Provider 条目名（桥识别模板锚点，
+不看模型名）。回滚 = 把 `systemone-exprsel` 从 model_list 删掉即可，回退路径与现状等价。
+
 ## DiceFrame（DF）接入指引
 
 1. 服务商/Provider 增加一条自定义 OpenAI 兼容条目：
@@ -181,18 +223,22 @@ cd systemone-bridge                     # 仓库根目录
 ## 测试
 
 ```powershell
-uv run pytest tests/ -q     # 56 用例：真实快照解析 / DF 合成 / 错误码（422×2/502/500/400）
-                            #           / mock 端到端 / OpenXLab 网关形状（/v1/systemone + model 注入）
-                            #           / WebUI（脱敏 / 掩码保留 / 热生效 / 决策探测 / bootstrap）
+uv run pytest tests/ -q     # 83 用例：真实快照解析 / DF 合成 / 三决策解析器（expression.check /
+                            # jargon compare / emoji replace：命中 + 相邻模板不误识别）/ 
+                            # 错误码（422×2/502/500/400）/ mock 端到端 / OpenXLab 网关形状
+                            # （/v1/systemone + model 注入 + noul 最小答案归一化）/ WebUI
 ```
 
-`tests/fixtures/` 含 4 份真实 MaiBot exprsel 快照与 DF 检定规划模板副本；
+`tests/fixtures/` 含 4 份真实 MaiBot exprsel 快照、3 份由真实模板渲染的三决策任务命中
+fixture 与 DF 检定规划模板副本；
 `tests/mock_systemone.py` 按 P1 规格实现 mock（含官方校验语义与 422）。
 
 ## 协议适配说明
 
 官方开源 serving 的决策端点是 `POST /v1/decisions`（默认），OpenXLab 托管网关则为
-`POST /v1/systemone` 且要求请求体顶层 `model` 字段、choice 题必带 `instructions`——
+`POST /v1/systemone` 且要求请求体顶层 `model` 字段、choice 题必带 `instructions`、
+noul 题必带键为 `true`/`false` 的 `criteria`（官方规格允许省略），且 noul 答案只回
+`{"type":"noul","noul":P(yes)}`（南向客户端已归一化为官方完整包络）——
 通过 `[upstream_systemone]` 的 `decisions_path` / `model` 配置项切换，字段级差异见
 [specs/systemone-protocol.md](specs/systemone-protocol.md)。
 

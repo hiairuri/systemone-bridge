@@ -30,6 +30,9 @@ class UpstreamSystemOneConfig(BaseModel):
 class TaskParsersConfig(BaseModel):
     expression_selector: bool = True
     df_check_planner: bool = True
+    expression_check: bool = True
+    jargon_compare: bool = True
+    emoji_replace: bool = True
 
 
 class TranslationConfig(BaseModel):
@@ -95,7 +98,7 @@ _TOML_COMMENTS: dict[str, tuple[str, ...]] = {
 _TOML_KEY_ORDER: dict[str, tuple[str, ...]] = {
     "server": ("host", "port"),
     "upstream_systemone": ("base_url", "decisions_path", "api_key", "model", "timeout_seconds"),
-    "task_parsers": ("expression_selector", "df_check_planner"),
+    "task_parsers": ("expression_selector", "df_check_planner", "expression_check", "jargon_compare", "emoji_replace"),
     "translation": ("expression_min_probability", "expression_max_selected"),
     "logging": ("level", "dir"),
 }

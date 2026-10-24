@@ -98,5 +98,15 @@ class SystemOneClient:
             raise SystemOneError("bad_response", "响应缺少非空 answers 字段")
         for name, answer in answers.items():
             if not isinstance(answer, dict) or not isinstance(answer.get("probabilities"), dict):
-                raise SystemOneError("bad_response", f"answers.{name} 缺少 probabilities")
+                # OpenXLab 托管网关的 noul 答案只回 {"type":"noul","noul":P(yes)}（实测 2026-10-24），
+                # 无 probabilities/decision/confidence；官方 serving 为完整包络。在此归一化为官方
+                # 形状，北向解析器统一按规格消费。
+                if isinstance(answer, dict) and answer.get("type") == "noul" and isinstance(
+                    answer.get("noul"), (int, float)
+                ):
+                    p_yes = float(answer["noul"])
+                    answer["probabilities"] = {"no": 1.0 - p_yes, "yes": p_yes}
+                    answer.setdefault("decision", "yes" if p_yes >= 0.5 else "no")
+                else:
+                    raise SystemOneError("bad_response", f"answers.{name} 缺少 probabilities")
         return answers

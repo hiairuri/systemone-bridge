@@ -12,11 +12,15 @@
 from __future__ import annotations
 
 import re
-import time
-import secrets
 from typing import Any
 
-from .base import NorthboundRequest, ParsedTask, ParseError, dump_json
+from .base import (
+    NorthboundRequest,
+    ParsedTask,
+    ParseError,
+    chat_completion_response,
+    dump_json,
+)
 
 # 候选行：`6845: 情景=狐系角色互动时 | 风格=句尾加 喵，自称本狐`
 _CANDIDATE_LINE = re.compile(r"^(\d+):\s*情景=(.*?)\s*\|\s*风格=(.*)$", re.MULTILINE)
@@ -92,20 +96,4 @@ class ExpressionSelectorParser:
             if probability >= self.min_probability
         ]
         content = dump_json({"selected_ids": selected})
-        return _chat_completion(request.model, content)
-
-
-def _chat_completion(model: str, content: str) -> dict[str, Any]:
-    return {
-        "id": "chatcmpl-" + secrets.token_hex(12),
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
-            }
-        ],
-    }
+        return chat_completion_response(request.model, content)

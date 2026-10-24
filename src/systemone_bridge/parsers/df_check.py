@@ -261,6 +261,10 @@ def _clean_player(
     questions: dict[str, dict[str, Any]] = {
         f"p{index}_needs_check": {
             "type": "noul",
+            # OpenXLab 托管网关比官方 serving 严：noul 必须带 criteria 且键为 true/false
+            # （实测 400 "field `criteria` must be an object with `true`/`false` keys"；
+            # 官方规格允许省略或 yes/true/1 键，此形状两边兼容）
+            "criteria": {"true": "需要系统检定", "false": "无需检定"},
             "instructions": f"{label} 的行动「{action[:300]}」是否需要系统检定？{hint}",
         },
         f"p{index}_kind": {

@@ -137,6 +137,21 @@
       <div><div class="t-label">DiceFrame 回合检定规划</div>
       <div class="t-hint">识别 dice_checks 工具调用，合成合法 tool_calls 回包</div></div>
     </div>
+    <div class="toggle-row">
+      <input type="checkbox" id="parser-exprcheck" data-section="task_parsers" data-key="expression_check">
+      <div><div class="t-label">表达方式入库审核（MaiBot expression.check）</div>
+      <div class="t-hint">识别「请评估以下表达方式或语言风格」模板，noul 判定回填 suitable</div></div>
+    </div>
+    <div class="toggle-row">
+      <input type="checkbox" id="parser-jargon" data-section="task_parsers" data-key="jargon_compare">
+      <div><div class="t-label">黑话推断比对（MaiBot jargon compare）</div>
+      <div class="t-hint">识别「请比较这两个推断结果」模板，noul 判定回填 is_similar</div></div>
+    </div>
+    <div class="toggle-row">
+      <input type="checkbox" id="parser-emojirep" data-section="task_parsers" data-key="emoji_replace">
+      <div><div class="t-label">表情包替换决策（MaiBot emoji_replace）</div>
+      <div class="t-hint">识别「需要决定是否取消注册一个旧表情包」模板，choice 选编号或 keep</div></div>
+    </div>
     <div class="grid" style="margin-top:8px">
       <div><label>exprsel 最低入选概率（0~1）</label><input type="number" id="tr-minp" step="0.01" min="0" max="1" data-section="translation" data-key="expression_min_probability"></div>
       <div><label>exprsel 最多入选条数（0~62）</label><input type="number" id="tr-maxsel" step="1" min="0" max="62" data-section="translation" data-key="expression_max_selected"></div>

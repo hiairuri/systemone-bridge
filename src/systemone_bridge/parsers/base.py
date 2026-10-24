@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import secrets
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -105,3 +107,27 @@ class TaskParser(Protocol):
 
 def dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def chat_completion_response(model: str, content: str) -> dict[str, Any]:
+    """把文本内容合成为北向 OpenAI chat.completion 响应体（各解析器共用）。"""
+
+    return {
+        "id": "chatcmpl-" + secrets.token_hex(12),
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+
+def full_text(request: NorthboundRequest) -> str:
+    """system 与 user 文本的拼接视图：供模板锚点识别（锚点模板唯一，拼接不影响保守性）。"""
+
+    return request.system_text + "\n" + request.user_text

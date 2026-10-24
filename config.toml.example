@@ -27,6 +27,12 @@ timeout_seconds = 10.0
 expression_selector = true
 # DiceFrame 回合检定规划器（dice_checks 工具调用）
 df_check_planner = true
+# MaiBot 表达方式入库前审核（expression.check，noul 判定）
+expression_check = true
+# MaiBot 黑话推断比对（jargon compare，noul 判定）
+jargon_compare = true
+# MaiBot 表情包替换决策（emoji_replace，choice ≤21 选 1）
+emoji_replace = true
 
 [translation]
 # exprsel：把 SystemOne 概率分布映射回 selected_ids 的最低入选概率

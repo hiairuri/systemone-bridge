@@ -124,3 +124,49 @@ async def test_openxlab_gateway_end_to_end(tmp_path, http_client: ClientSession)
     content = json.loads(data["choices"][0]["message"]["content"])
     assert set(content.keys()) == {"selected_ids"}
     assert isinstance(content["selected_ids"], list) and content["selected_ids"]
+
+
+async def test_openxlab_noul_minimal_answer_normalized() -> None:
+    """OpenXLab 网关 noul 答案只回 {"type":"noul","noul":P(yes)}（实测 2026-10-24）；
+    南向客户端归一化为官方包络（probabilities/decision），官方完整包络原样通过。"""
+
+    gateway_body = {
+        "model": "intern-decision-4b",
+        "request_id": "0" * 32,
+        "answers": {"suitability": {"type": "noul", "noul": 0.70647595671343}},
+        "usage": {"input_tokens": 241, "output_tokens": 12},
+    }
+    received: list[dict[str, Any]] = []
+
+    async def capture(request: web.Request) -> web.Response:
+        received.append(await request.json())
+        return web.json_response(gateway_body)
+
+    app = web.Application()
+    app.router.add_post("/v1/systemone", capture)
+    url, runner = await spawn(app)
+    config = UpstreamSystemOneConfig(base_url=url, decisions_path="/v1/systemone", model="intern-decision-4b")
+    try:
+        async with ClientSession() as session:
+            client = SystemOneClient(config, session)
+            answers = await client.decide(
+                state={"task": "审核"},
+                questions={
+                    "suitability": {
+                        "type": "noul",
+                        "criteria": {"true": "适合", "false": "不适合"},
+                        "instructions": "是否适合？",
+                    }
+                },
+            )
+    finally:
+        await runner.cleanup()
+
+    answer = answers["suitability"]
+    p = answer["noul"]
+    assert answer["probabilities"] == {"no": 1.0 - p, "yes": p}
+    assert answer["decision"] == "yes"  # P(yes) ≥ 0.5
+    # 南向请求带 noul criteria（网关 400 校验必需）与 instructions
+    question = received[0]["questions"]["suitability"]
+    assert question["criteria"] == {"true": "适合", "false": "不适合"}
+    assert question["instructions"]

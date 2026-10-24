@@ -107,7 +107,13 @@ def atomic_write_config(path: Any, config: BridgeConfig) -> None:
 def build_router(config: BridgeConfig, systemone: Any, stats: Any) -> NorthboundRouter:
     """按当前配置装配解析器与北向路由器（启动与热应用共用）。"""
 
-    from .parsers import DfCheckPlannerParser, ExpressionSelectorParser
+    from .parsers import (
+        DfCheckPlannerParser,
+        EmojiReplaceParser,
+        ExpressionCheckParser,
+        ExpressionSelectorParser,
+        JargonCompareParser,
+    )
 
     parsers: list[Any] = []
     if config.task_parsers.expression_selector:
@@ -119,6 +125,12 @@ def build_router(config: BridgeConfig, systemone: Any, stats: Any) -> Northbound
         )
     if config.task_parsers.df_check_planner:
         parsers.append(DfCheckPlannerParser())
+    if config.task_parsers.expression_check:
+        parsers.append(ExpressionCheckParser())
+    if config.task_parsers.jargon_compare:
+        parsers.append(JargonCompareParser())
+    if config.task_parsers.emoji_replace:
+        parsers.append(EmojiReplaceParser())
     return NorthboundRouter(parsers, systemone, stats=stats)
 
 
