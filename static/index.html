@@ -324,6 +324,7 @@ async function refreshStatus() {
     $("st-total").textContent = data.total_requests ?? 0;
     const successes = data.successes || {};
     const failures = data.failures || {};
+    const notDecisions = data.not_decisions || 0;
     const okCount = Object.values(successes).reduce((sum, n) => sum + n, 0);
     const failCount = Object.values(failures).reduce((sum, n) => sum + n, 0);
     $("st-ok").textContent = okCount;
@@ -332,6 +333,7 @@ async function refreshStatus() {
     $("st-err").textContent = errors.length;
     const parts = Object.entries(successes).map(([via, count]) => `<code>${via}</code>× ${count}`);
     parts.push(...Object.entries(failures).map(([code, count]) => `<code>${code}</code>× ${count}`));
+    if (notDecisions) parts.push(`<code>非决策请求（预期）</code>× ${notDecisions}`);
     $("st-routes").innerHTML = parts.length ? parts.join("　") : "暂无请求";
     $("st-errors").innerHTML = errors.length
       ? errors.slice().reverse().map((e) =>

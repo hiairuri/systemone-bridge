@@ -24,8 +24,11 @@ class BridgeStats:
         self.total_requests = 0
         # 成功决策：via（systemone.<parser>）→ 次数
         self._success_counter: Counter[str] = Counter()
-        # 失败：错误码（unknown_template/bad_template/upstream_error/...）→ 次数
+        # 失败：错误码（bad_template/upstream_error/...）→ 次数
         self._failure_counter: Counter[str] = Counter()
+        # 非决策请求（unknown_template）：混合 model_list 架构下的预期流量
+        # （生成型任务 422 后由调用方切下一模型），单独计数、不进错误流
+        self._not_decision_count = 0
         self._recent_errors: deque[dict[str, Any]] = deque(maxlen=_MAX_RECENT_ERRORS)
 
     @property
@@ -43,6 +46,11 @@ class BridgeStats:
         """记录一次成功决策（via = systemone.<parser>）。"""
 
         self._success_counter[via] += 1
+
+    def record_not_decision(self) -> None:
+        """记录一次非决策请求（unknown_template）：预期流量，不进失败/错误流。"""
+
+        self._not_decision_count += 1
 
     def record_error(self, code: str, detail: str) -> None:
         """记录一次失败：按错误码计数并追加最近错误（超长详情截断）。"""
@@ -65,5 +73,6 @@ class BridgeStats:
             "total_requests": self.total_requests,
             "successes": dict(self._success_counter.most_common()),
             "failures": dict(self._failure_counter.most_common()),
+            "not_decisions": self._not_decision_count,
             "recent_errors": list(self._recent_errors)[-recent_limit:],
         }

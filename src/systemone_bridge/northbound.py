@@ -63,9 +63,9 @@ class NorthboundRouter:
         parser = self._match_parser(request)
         if parser is None:
             # 混合 model_list 架构下的常态预期流量（生成型任务 422 后由调用方切下一模型），
-            # 仅计数与 debug 日志，不逐条刷 info（stats 里看累计即可）。
+            # 计入 not_decisions（不进失败/错误流），debug 日志不刷屏。
             logger.debug("model=%s 无解析器锚点，返回 422 unknown_template", model)
-            self._record_error("unknown_template", f"model={model} 不匹配任何已启用解析器")
+            self._record_not_decision(f"model={model} 不匹配任何已启用解析器")
             raise BridgeError(
                 422,
                 "unknown_template",
@@ -131,3 +131,9 @@ class NorthboundRouter:
 
         if self._stats is not None:
             self._stats.record_error(code, detail)
+
+    def _record_not_decision(self, detail: str) -> None:
+        """非决策请求打点：预期流量，单独计数（未接统计器时为空操作）。"""
+
+        if self._stats is not None:
+            self._stats.record_not_decision()
