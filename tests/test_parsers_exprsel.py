@@ -42,7 +42,9 @@ def test_parse_real_snapshots(name: str) -> None:
     assert list(criteria.keys()) == expected_ids  # 顺序保留（协议要求）
     assert len(expected_ids) <= 62  # SystemOne 单题选项上限
     assert parsed.questions["selection"]["type"] == "choice"
-    assert parsed.state["recent_chat"] == request.user_texts
+    # 上下文按预算裁剪（保最近消息）：裁剪后必为 user_texts 的后缀子序列，且非空
+    trimmed = parsed.state["recent_chat"]
+    assert trimmed and trimmed == request.user_texts[-len(trimmed):]
     assert all(value.startswith("情景=") for value in criteria.values())
 
 

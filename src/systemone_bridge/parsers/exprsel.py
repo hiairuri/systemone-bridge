@@ -30,6 +30,33 @@ _SYSTEM_ANCHOR = "候选表达方式："
 # SystemOne 单题选项硬上限（候选符号池 A..Z a..z 0..9）
 _MAX_OPTIONS = 62
 
+# 输入 token 预算：Decision-4B 上下文 8K（OpenXLab 实测超限返回 400
+# "estimated input tokens exceed the model's context limit"）。候选清单（system，~50 条
+# ≈2-3K tokens）+ state（recent_chat 聊天历史，随会话变长）必须合计压在预算内。
+# 中文 ≈1 字/token，保守按字符数估；历史只保留最近消息（表达选择本就只看近期语境）。
+_CONTEXT_CHAR_BUDGET = 4000  # recent_chat 合计字符上限
+
+
+def _trim_context(user_texts: list[str], budget: int) -> list[str]:
+    """从最新消息往回收集，直到预算耗尽；超预算的早期消息整条丢弃（保最近语境）。"""
+
+    kept: list[str] = []
+    used = 0
+    for text in reversed(user_texts):
+        length = len(text)
+        if used + length > budget:
+            break
+        kept.append(text)
+        used += length
+    kept.reverse()
+    return kept
+
+# 输入 token 预算：Decision-4B 上下文 8K（OpenXLab 实测超限返回 400
+# "estimated input tokens exceed the model's context limit"）。候选清单（system，~50 条
+# ≈2-3K tokens）+ state（recent_chat 聊天历史，随会话变长）必须合计压在预算内。
+# 中文 ≈1 字/token，保守按字符数×1.5 估 token；历史只保留最近消息（表达选择本就只看近期语境）。
+_CONTEXT_CHAR_BUDGET = 4000  # recent_chat 合计字符上限（≈6K tokens，给候选与指令留足余量）
+
 
 class ExpressionSelectorParser:
     name = "expression_selector"
@@ -61,7 +88,7 @@ class ExpressionSelectorParser:
         }
         state = {
             "task": "从候选表达方式中为本次可见回复挑选最合适的条目；若都不合适则视为空选择。",
-            "recent_chat": request.user_texts,
+            "recent_chat": _trim_context(request.user_texts, _CONTEXT_CHAR_BUDGET),
         }
         questions = {
             "selection": {
